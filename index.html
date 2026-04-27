@@ -6,15 +6,15 @@
     <title>Pablo: Una Odisea en el Sur</title>
     <style>
         body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: 'Courier New', Courier, monospace; color: white; touch-action: none; }
-        canvas { display: block; background: #87CEEB; margin: 0 auto; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
-        #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; text-shadow: 2px 2px #000; }
-        #dialogue { position: absolute; bottom: 20%; width: 100%; text-align: center; font-size: 1.2rem; background: rgba(0,0,0,0.6); padding: 10px 0; display: none; }
+        canvas { display: block; background: #87CEEB; margin: 0 auto; }
+        #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; }
+        #dialogue { position: absolute; bottom: 20%; width: 100%; text-align: center; font-size: 1.2rem; background: rgba(0,0,0,0.7); padding: 10px 0; display: none; z-index: 10; }
     </style>
 </head>
 <body>
     <div id="ui">
         <div id="level-title">NIVEL 1: Banfield en Bici</div>
-        <div id="stats">Pedido: 100% | Integridad: 100%</div>
+        <div id="stats">Pedido: Caliente | Integridad: 100%</div>
     </div>
     <div id="dialogue"></div>
     <canvas id="gameCanvas"></canvas>
@@ -24,170 +24,118 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const dialogueBox = document.getElementById('dialogue');
 
-// Configuración de pantalla
 function resize() {
     canvas.width = window.innerWidth;
-    canvas.height = Math.min(window.innerHeight, 400);
+    canvas.height = 400;
 }
 window.addEventListener('resize', resize);
 resize();
 
-// Estados del Juego
-let gameState = {
-    level: 1,
-    gameOver: false,
-    distance: 0,
-    speed: 5,
-    pabloY: 0,
-    isJumping: false,
-    isDucking: false,
-    jumpV: 0,
-    obstacles: [],
-    frame: 0,
-    messageTimer: 0
+// --- CONFIGURACIÓN DE NIVELES ---
+const LEVELS = {
+    1: { title: "NIVEL 1: Lomas - El Reparto", bg: "#87CEEB", ground: "#555", speed: 5 },
+    2: { title: "NIVEL 2: La Vereda - Caminando", bg: "#a8dadc", ground: "#777", speed: 3 },
+    3: { title: "NIVEL 3: Camino Negro - El Camión", bg: "#457b9d", ground: "#333", speed: 12 },
+    4: { title: "NIVEL 4: El Plano Espectral", bg: "#1d3557", ground: "#f1faee", speed: 4 }
 };
 
-// Configuración de Niveles
-const LEVELS = {
-    1: { title: "NIVEL 1: Lomas - El Reparto", bg: "#87CEEB", ground: "#555", mode: "bike" },
-    2: { title: "NIVEL 2: La Vereda - Caminando", bg: "#a8dadc", ground: "#777", mode: "walk" },
-    3: { title: "NIVEL 3: Camino Negro - El Camión", bg: "#457b9d", ground: "#333", mode: "truck" },
-    4: { title: "NIVEL 4: El Plano Espectral", bg: "#1d3557", ground: "#f1faee", mode: "soul" }
+let game = {
+    level: 1,
+    distance: 0,
+    pabloY: 0,
+    jumpV: 0,
+    isJumping: false,
+    obstacles: [],
+    frame: 0,
+    active: true
 };
 
 class Obstacle {
-    constructor(type, x) {
+    constructor(x) {
         this.x = x;
-        this.type = type; // 'hole', 'dog', 'bus', 'door', 'cloud'
-        this.w = 50;
-        this.h = 30;
-        this.y = canvas.height - 50;
-        
-        if(type === 'bus') { this.w = 120; this.h = 60; this.y = canvas.height - 80; }
-        if(type === 'cloud') { this.y = canvas.height - 120; }
+        this.w = game.level === 3 ? 100 : 40;
+        this.h = game.level === 3 ? 60 : 30;
+        this.y = canvas.height - 20 - this.h;
+        this.color = game.level === 4 ? "rgba(255,255,255,0.4)" : "#e63946";
     }
-
+    update() { this.x -= LEVELS[game.level].speed; }
     draw() {
-        ctx.fillStyle = this.type === 'bus' ? '#e63946' : '#000';
-        if(gameState.level === 4) ctx.fillStyle = "rgba(255,255,255,0.5)";
+        ctx.fillStyle = this.color;
         ctx.fillRect(this.x, this.y, this.w, this.h);
-        
-        ctx.fillStyle = "white";
-        ctx.font = "10px Arial";
-        ctx.fillText(this.type.toUpperCase(), this.x + 5, this.y + 15);
     }
-}
-
-function update() {
-    if(gameState.gameOver) return;
-
-    gameState.frame++;
-    gameState.distance += gameState.speed / 10;
-
-    // Lógica de Salto/Gravedad
-    if(gameState.isJumping) {
-        gameState.pabloY += gameState.jumpV;
-        gameState.jumpV += 0.8; // Gravedad
-        if(gameState.pabloY >= 0) {
-            gameState.pabloY = 0;
-            gameState.isJumping = false;
-        }
-    }
-
-    // Generar Obstáculos
-    if(gameState.frame % 100 === 0) {
-        let type = 'hole';
-        if(gameState.level === 1) type = Math.random() > 0.5 ? 'hole' : 'bus';
-        if(gameState.level === 2) type = 'dog';
-        if(gameState.level === 3) type = 'bus';
-        if(gameState.level === 4) type = 'cloud';
-        gameState.obstacles.push(new Obstacle(type, canvas.width));
-    }
-
-    // Mover Obstáculos
-    gameState.obstacles.forEach((obs, index) => {
-        obs.x -= gameState.speed;
-        
-        // Colisión simple
-        if(obs.x < 100 && obs.x + obs.w > 50 && (gameState.pabloY + canvas.height - 70) > obs.y) {
-            if(gameState.level === 3) {
-                triggerDeath(); // Muerte obligatoria nivel 3
-            } else {
-                // Penalización menor
-            }
-        }
-    });
-
-    // Transiciones de Nivel
-    if(gameState.distance > 100 && gameState.level === 1) nextLevel(2);
-    if(gameState.distance > 200 && gameState.level === 2) nextLevel(3);
-    if(gameState.distance > 350 && gameState.level === 3) { /* El choque ocurre por obstáculos */ }
-
-    draw();
-    requestAnimationFrame(update);
-}
-
-function nextLevel(num) {
-    gameState.level = num;
-    gameState.distance = 0;
-    gameState.obstacles = [];
-    document.getElementById('level-title').innerText = LEVELS[num].title;
-    
-    if(num === 2) {
-        gameState.speed = 3; // Pablo camina lento
-        showMessage("¡Se rompió la cadena! A caminar...");
-    }
-    if(num === 3) {
-        gameState.speed = 12; // A toda velocidad
-        showMessage("¡Me agarro de este camión! Cuidado...");
-    }
-}
-
-function triggerDeath() {
-    gameState.level = 4;
-    gameState.speed = 4;
-    document.getElementById('level-title').innerText = LEVELS[4].title;
-    showMessage("El cuerpo quedó en el asfalto... el alma sigue entregando.");
 }
 
 function showMessage(txt) {
     dialogueBox.innerText = txt;
     dialogueBox.style.display = 'block';
-    setTimeout(() => dialogueBox.style.display = 'none', 4000);
+    setTimeout(() => dialogueBox.style.display = 'none', 3000);
+}
+
+function nextLevel(n) {
+    game.level = n;
+    game.distance = 0;
+    game.obstacles = [];
+    document.getElementById('level-title').innerText = LEVELS[n].title;
+    if(n === 2) showMessage("¡Se rompió la cadena! A caminar...");
+    if(n === 3) showMessage("¡A toda velocidad tras el camión!");
+}
+
+function update() {
+    if(!game.active) return;
+    game.frame++;
+    game.distance += 1;
+
+    // Física
+    if(game.isJumping) {
+        game.pabloY += game.jumpV;
+        game.jumpV += 0.7;
+        if(game.pabloY >= 0) { game.pabloY = 0; game.isJumping = false; }
+    }
+
+    // Obstáculos
+    if(game.frame % 80 === 0) game.obstacles.push(new Obstacle(canvas.width));
+    game.obstacles.forEach((o, i) => {
+        o.update();
+        if(o.x < -100) game.obstacles.splice(i, 1);
+        // Colisión
+        if(o.x < 80 && o.x > 30 && game.pabloY > -30) {
+            if(game.level === 3) {
+                game.level = 4;
+                nextLevel(4);
+                showMessage("El cuerpo quedó... el alma sigue.");
+            }
+        }
+    });
+
+    // Progresión
+    if(game.distance > 800 && game.level === 1) nextLevel(2);
+    if(game.distance > 800 && game.level === 2) nextLevel(3);
+
+    draw();
+    requestAnimationFrame(update);
 }
 
 function draw() {
-    const current = LEVELS[gameState.level];
-    ctx.fillStyle = current.bg;
+    const lv = LEVELS[game.level];
+    ctx.fillStyle = lv.bg;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Suelo
-    ctx.fillStyle = current.ground;
+    
+    ctx.fillStyle = lv.ground;
     ctx.fillRect(0, canvas.height - 20, canvas.width, 20);
 
-    // Pablo
-    ctx.fillStyle = gameState.level === 4 ? "rgba(200, 255, 255, 0.8)" : "#333";
-    let pabloHeight = gameState.isDucking ? 25 : 50;
-    ctx.fillRect(50, canvas.height - 70 + gameState.pabloY, 30, pabloHeight);
+    // PABLO
+    ctx.fillStyle = game.level === 4 ? "#00f2ff" : "#333";
+    ctx.fillRect(50, canvas.height - 70 + game.pabloY, 30, 50); // Pablo
     
-    // Mochila de repartidor
-    ctx.fillStyle = "#ff5722";
-    ctx.fillRect(40, canvas.height - 65 + gameState.pabloY, 15, 30);
+    ctx.fillStyle = "#ff5722"; // Mochila
+    ctx.fillRect(40, canvas.height - 65 + game.pabloY, 12, 30);
 
-    // Dibujar obstáculos
-    gameState.obstacles.forEach(obs => obs.draw());
+    game.obstacles.forEach(o => o.draw());
 }
 
-// Controles
-function handleInput() {
-    if(!gameState.isJumping) {
-        gameState.isJumping = true;
-        gameState.jumpV = -12;
-    }
-}
-
-window.addEventListener('keydown', (e) => { if(e.code === 'Space' || e.code === 'ArrowUp') handleInput(); });
-window.addEventListener('touchstart', handleInput);
+function jump() { if(!game.isJumping) { game.isJumping = true; game.jumpV = -13; } }
+window.addEventListener('keydown', jump);
+window.addEventListener('touchstart', jump);
 
 update();
 </script>
