@@ -1,143 +1,808 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pablo: Una Odisea en el Sur</title>
-    <style>
-        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: 'Courier New', Courier, monospace; color: white; touch-action: none; }
-        canvas { display: block; background: #87CEEB; margin: 0 auto; }
-        #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; }
-        #dialogue { position: absolute; bottom: 20%; width: 100%; text-align: center; font-size: 1.2rem; background: rgba(0,0,0,0.7); padding: 10px 0; display: none; z-index: 10; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Pablo Delivery — Lomas de Zamora</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a0f;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      user-select: none;
+      -webkit-user-select: none;
+      overflow: hidden;
+    }
+    #hdr {
+      color: #F5C518;
+      font: bold 11px 'Courier New', monospace;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    canvas {
+      display: block;
+      border: 2px solid #1a1a1a;
+      cursor: pointer;
+      max-width: 100vw;
+    }
+    #ftr {
+      color: #2a2a2a;
+      font: 10px 'Courier New', monospace;
+      margin-top: 6px;
+      text-align: center;
+    }
+  </style>
 </head>
 <body>
-    <div id="ui">
-        <div id="level-title">NIVEL 1: Banfield en Bici</div>
-        <div id="stats">Pedido: Caliente | Integridad: 100%</div>
-    </div>
-    <div id="dialogue"></div>
-    <canvas id="gameCanvas"></canvas>
+<div id="hdr">★ Pablo Delivery ★ Lomas de Zamora ★</div>
+<canvas id="c" width="800" height="400"></canvas>
+<div id="ftr">↑ SPACE = saltar &nbsp;·&nbsp; ↓ = agacharse &nbsp;·&nbsp; toca arriba/abajo en móvil</div>
 
 <script>
-const canvas = document.getElementById('gameCanvas');
+const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
-const dialogueBox = document.getElementById('dialogue');
+const W = 800, H = 400;
 
-function resize() {
-    canvas.width = window.innerWidth;
-    canvas.height = 400;
+// ── Core constants ─────────────────────────────────────────
+const FLOOR    = 315;   // y where wheels rest
+const ROAD_TOP = 283;   // top of road surface
+const JUMP_V   = -14;
+const GRAVITY  = 0.58;
+const PABLO_X  = 155;
+
+// Pablo hitbox heights
+const H_STAND  = 82;    // pTop = FLOOR - H_STAND
+const H_DUCK   = 38;    // pTop = FLOOR - H_DUCK
+
+// ── Seeded random (for consistent BG each frame) ──────────
+const sr = n => { const s = Math.sin(n * 127.1 + 311.7) * 43758.5; return s - Math.floor(s); };
+
+// ── Utility ───────────────────────────────────────────────
+function rr(x, y, w, h, r = 5) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
 }
-window.addEventListener('resize', resize);
-resize();
 
-// --- CONFIGURACIÓN DE NIVELES ---
-const LEVELS = {
-    1: { title: "NIVEL 1: Lomas - El Reparto", bg: "#87CEEB", ground: "#555", speed: 5 },
-    2: { title: "NIVEL 2: La Vereda - Caminando", bg: "#a8dadc", ground: "#777", speed: 3 },
-    3: { title: "NIVEL 3: Camino Negro - El Camión", bg: "#457b9d", ground: "#333", speed: 12 },
-    4: { title: "NIVEL 4: El Plano Espectral", bg: "#1d3557", ground: "#f1faee", speed: 4 }
-};
+// ── Game state ────────────────────────────────────────────
+let G = {};
+function init() {
+  G = {
+    phase:     'start',  // 'start' | 'play' | 'over'
+    frame:     0,
+    score:     0,
+    speed:     4,
+    bgX:       0,
+    roadX:     0,
+    temp:      100,
+    integ:     100,
+    invTimer:  0,
+    pablo: { y: FLOOR, vy: 0, jumping: false, ducking: false, tick: 0 },
+    obs:       [],
+    spawnCD:   90,
+    rain:      false,
+    rainTimer: 500,
+    drops:     [],
+    highScore: G.highScore || 0,
+  };
+}
+init();
 
-let game = {
-    level: 1,
-    distance: 0,
-    pabloY: 0,
-    jumpV: 0,
-    isJumping: false,
-    obstacles: [],
-    frame: 0,
-    active: true
-};
+// ══════════════════════════════════════════════════════════
+// BACKGROUND
+// ══════════════════════════════════════════════════════════
+function drawSky() {
+  const g = ctx.createLinearGradient(0, 0, 0, ROAD_TOP);
+  g.addColorStop(0, G.rain ? '#5577AA' : '#7EC8E3');
+  g.addColorStop(1, G.rain ? '#7A8FA0' : '#C0E4F5');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, ROAD_TOP);
+}
 
-class Obstacle {
-    constructor(x) {
-        this.x = x;
-        this.w = game.level === 3 ? 100 : 40;
-        this.h = game.level === 3 ? 60 : 30;
-        this.y = canvas.height - 20 - this.h;
-        this.color = game.level === 4 ? "rgba(255,255,255,0.4)" : "#e63946";
+function drawHouseAt(sx, seed) {
+  const w  = 75 + sr(seed)    * 55;
+  const h  = 65 + sr(seed+1)  * 55;
+  const walls = ['#EAD8B1','#D2C49A','#C8DFCA','#E8C8C8','#D0DFF0','#F0E0C8'];
+  const roofs  = ['#7A3D10','#9B4A1F','#5C2D0A','#3D2B1F','#6B3B2A'];
+  const wc = walls[Math.floor(sr(seed+2) * walls.length)];
+  const rc = roofs[Math.floor(sr(seed+3) * roofs.length)];
+  const by = ROAD_TOP, ty = by - h;
+
+  // Wall
+  ctx.fillStyle = wc; ctx.fillRect(sx, ty, w, h);
+
+  // Roof
+  ctx.fillStyle = rc;
+  ctx.beginPath();
+  ctx.moveTo(sx - 6, ty);
+  ctx.lineTo(sx + w / 2, ty - 22 - sr(seed+4) * 14);
+  ctx.lineTo(sx + w + 6, ty);
+  ctx.fill();
+
+  // Door
+  ctx.fillStyle = '#6B3300';
+  const dw = 14, dh = 22;
+  ctx.fillRect(sx + w/2 - dw/2, by - dh, dw, dh);
+  // Door arch
+  ctx.fillStyle = '#8B4413';
+  ctx.beginPath();
+  ctx.arc(sx + w/2, by - dh, dw/2, Math.PI, 0);
+  ctx.fill();
+
+  // Windows
+  const nw = 1 + Math.floor(sr(seed+5) * 2);
+  ctx.fillStyle = G.rain ? '#3E6880' : '#AED6F1';
+  for (let i = 0; i < nw; i++) {
+    const wx = sx + 8 + i * (w / (nw + 1));
+    ctx.fillRect(wx, ty + 14, 15, 13);
+    ctx.strokeStyle = wc; ctx.lineWidth = 1;
+    ctx.strokeRect(wx, ty + 14, 15, 13);
+  }
+
+  // Small fence
+  ctx.strokeStyle = '#CCC'; ctx.lineWidth = 1;
+  for (let fx = sx; fx < sx + w; fx += 8) {
+    ctx.beginPath(); ctx.moveTo(fx, by); ctx.lineTo(fx, by + 12); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(fx, by + 3); ctx.lineTo(Math.min(fx + 8, sx + w), by + 3); ctx.stroke();
+  }
+
+  // Sidewalk strip in front of house
+  ctx.fillStyle = '#C5B28A';
+  ctx.fillRect(sx, by, w, 8);
+}
+
+function drawTreeAt(sx, seed) {
+  const th = 48 + sr(seed) * 32;
+  const tr = 20 + sr(seed+1) * 13;
+  const by = ROAD_TOP;
+  ctx.fillStyle = '#6B4220'; ctx.fillRect(sx - 4, by - th, 8, th);
+  ctx.fillStyle = G.rain ? '#2A5530' : '#3A7D44';
+  ctx.beginPath(); ctx.arc(sx, by - th - tr + 12, tr, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = G.rain ? '#20402A' : '#2D6135';
+  ctx.beginPath(); ctx.arc(sx - tr*0.4, by - th - tr*0.5 + 5, tr*0.7, 0, Math.PI*2); ctx.fill();
+}
+
+function drawSignAt(sx, seed) {
+  const texts = ['LOMAS\nDE ZAMORA','BANFIELD','ALMACÉN\nDON BETO','FERRETERÍA\nZAMORA','REMISERÍA\nBANFIELD','COLCHONES\nY SOMMIERS'];
+  const t = texts[Math.floor(sr(seed) * texts.length)];
+  ctx.fillStyle = '#888'; ctx.fillRect(sx + 29, ROAD_TOP - 62, 4, 62);
+  ctx.fillStyle = '#FFD700'; ctx.fillRect(sx, ROAD_TOP - 82, 66, 24);
+  ctx.strokeStyle = '#B8860B'; ctx.lineWidth = 1.5;
+  ctx.strokeRect(sx, ROAD_TOP - 82, 66, 24);
+  ctx.fillStyle = '#222'; ctx.font = 'bold 8px Courier New'; ctx.textAlign = 'center';
+  const lines = t.split('\n');
+  lines.forEach((l, i) => ctx.fillText(l, sx + 33, ROAD_TOP - 73 + i * 10));
+}
+
+function drawBackground() {
+  drawSky();
+  // Clouds
+  const cslots = 6;
+  for (let i = 0; i < cslots; i++) {
+    const cx = ((i * 140 + 60 - G.bgX * 0.08) % (W + 100) + W + 100) % (W + 100) - 50;
+    const cy = 18 + sr(i * 5 + 1) * 50;
+    const cw = 70 + sr(i * 5 + 2) * 60;
+    ctx.fillStyle = G.rain ? 'rgba(180,180,200,0.5)' : 'rgba(255,255,255,0.82)';
+    ctx.beginPath(); ctx.ellipse(cx, cy, cw/2, 14, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + cw*0.2, cy - 7, cw*0.3, 10, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx - cw*0.25, cy - 4, cw*0.25, 9, 0, 0, Math.PI*2); ctx.fill();
+  }
+  // Houses + Trees + Signs (procedural by slot)
+  const period = 145;
+  const s0 = Math.floor(G.bgX * 0.7 / period) - 1;
+  for (let i = s0; i <= s0 + 8; i++) {
+    const sx = i * period - G.bgX * 0.7;
+    const seed = (i * 23 + 7) & 0xFFFFF;
+    const type = sr(seed + 11);
+    if (type < 0.52)       drawHouseAt(sx, seed);
+    else if (type < 0.78)  { drawTreeAt(sx + 20, seed); drawTreeAt(sx + 55, seed + 3); }
+    else                   { drawSignAt(sx + 5, seed); drawTreeAt(sx + 85, seed + 50); }
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// ROAD
+// ══════════════════════════════════════════════════════════
+function drawRoad() {
+  // Sidewalk
+  ctx.fillStyle = '#C2AD90'; ctx.fillRect(0, ROAD_TOP - 2, W, 12);
+
+  // Asphalt
+  ctx.fillStyle = '#545454'; ctx.fillRect(0, ROAD_TOP + 10, W, H - ROAD_TOP - 10);
+
+  // Dashed center line
+  ctx.strokeStyle = '#D4B800'; ctx.lineWidth = 3;
+  ctx.setLineDash([28, 18]); ctx.lineDashOffset = -(G.roadX % 46);
+  ctx.beginPath(); ctx.moveTo(0, ROAD_TOP + 42); ctx.lineTo(W, ROAD_TOP + 42); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Edge lines
+  ctx.strokeStyle = '#EEEEEE'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, ROAD_TOP + 10); ctx.lineTo(W, ROAD_TOP + 10); ctx.stroke();
+
+  // Procedural cracks
+  const cp = 185;
+  const cs = Math.floor(G.roadX / cp);
+  for (let i = cs; i <= cs + 5; i++) {
+    const cx = i * cp - (G.roadX % cp);
+    const se = i * 17 + 9;
+    ctx.fillStyle = '#484848';
+    ctx.fillRect(cx + sr(se)*80, ROAD_TOP + 16 + sr(se+1)*20, 2 + sr(se+2)*7, 1);
+    ctx.fillRect(cx + sr(se+3)*80, ROAD_TOP + 18 + sr(se+4)*22, 1, 3 + sr(se+5)*8);
+  }
+
+  // Rain puddles on road
+  if (G.rain) {
+    const pp = 220;
+    const ps = Math.floor(G.roadX / pp);
+    for (let i = ps; i <= ps + 4; i++) {
+      const px = i * pp - (G.roadX % pp) + 60;
+      const se = i * 31 + 5;
+      ctx.fillStyle = 'rgba(90,120,180,0.18)';
+      ctx.beginPath();
+      ctx.ellipse(px + sr(se)*100, ROAD_TOP + 20 + sr(se+1)*35, 20 + sr(se+2)*25, 5, 0, 0, Math.PI*2);
+      ctx.fill();
     }
-    update() { this.x -= LEVELS[game.level].speed; }
-    draw() {
-        ctx.fillStyle = this.color;
-        ctx.fillRect(this.x, this.y, this.w, this.h);
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// PABLO
+// ══════════════════════════════════════════════════════════
+function drawPablo() {
+  const p = G.pablo;
+  const t = p.tick;
+  const duck = p.ducking;
+
+  if (G.invTimer > 0 && Math.floor(G.invTimer / 5) % 2 === 1) ctx.globalAlpha = 0.28;
+
+  ctx.save();
+  ctx.translate(PABLO_X, p.y);
+  if (duck) ctx.scale(1, 0.48);
+
+  // ── WHEELS ──
+  const wr = 18;
+  const wrot = t * 0.2;
+  function wheel(wx) {
+    ctx.strokeStyle = '#2A2A2A'; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.arc(wx, 0, wr, 0, Math.PI*2); ctx.stroke();
+    // Spokes
+    ctx.strokeStyle = '#4E6070'; ctx.lineWidth = 1.5;
+    for (let a = 0; a < Math.PI*2; a += Math.PI/3) {
+      ctx.beginPath(); ctx.moveTo(wx, 0);
+      ctx.lineTo(wx + Math.cos(a+wrot)*wr, Math.sin(a+wrot)*wr); ctx.stroke();
     }
+    ctx.fillStyle = '#3A3A3A'; ctx.beginPath(); ctx.arc(wx, 0, 4, 0, Math.PI*2); ctx.fill();
+  }
+  wheel(-22); wheel(22);
+
+  // ── FRAME ──
+  ctx.strokeStyle = '#C62828'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(-22,0); ctx.lineTo(0,-22); ctx.lineTo(22,0); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0,-22); ctx.lineTo(0,-35); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0,-35); ctx.lineTo(17,-31); ctx.stroke(); // handlebar
+  ctx.beginPath(); ctx.moveTo(-6,-30); ctx.lineTo(6,-30); ctx.stroke(); // seat
+
+  // ── LEGS (pedaling) ──
+  const lp = Math.sin(t * 0.22) * 7;
+  ctx.fillStyle = '#37474F';
+  ctx.fillRect(-8, -45 + lp, 8, 22); ctx.fillRect(0, -45 - lp, 8, 22);
+  ctx.fillStyle = '#1A1A1A';
+  ctx.fillRect(-10, -23 + lp, 12, 6); ctx.fillRect(0, -23 - lp, 12, 6); // shoes
+
+  // ── TORSO ──
+  ctx.fillStyle = '#1565C0'; ctx.fillRect(-10, -68, 20, 26);
+
+  // ── BIG THERMAL BAG ──
+  ctx.fillStyle = '#B71C1C'; ctx.fillRect(-26, -77, 20, 38);
+  ctx.fillStyle = '#FFCDD2'; ctx.fillRect(-24, -75, 16, 34);
+  ctx.strokeStyle = '#EF9A9A'; ctx.lineWidth = 1;
+  for (let ly = -70; ly < -43; ly += 7) {
+    ctx.beginPath(); ctx.moveTo(-24, ly); ctx.lineTo(-8, ly); ctx.stroke();
+  }
+  // Bag strap
+  ctx.strokeStyle = '#C62828'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(-10,-73); ctx.lineTo(-4,-60); ctx.stroke();
+
+  // ── HEAD ──
+  ctx.fillStyle = '#FDBCB4';
+  ctx.beginPath(); ctx.arc(0, -78, 10, 0, Math.PI*2); ctx.fill();
+
+  // ── CAP ──
+  ctx.fillStyle = '#D32F2F'; ctx.fillRect(-12, -91, 24, 12);
+  ctx.fillStyle = '#B71C1C'; ctx.fillRect(-12, -91, 24, 3);
+  ctx.fillStyle = '#D32F2F'; ctx.fillRect(-16, -80, 9, 5); // brim
+
+  // ── FACE ──
+  ctx.fillStyle = '#333';
+  ctx.fillRect(-4, -80, 3, 3); ctx.fillRect(1, -80, 3, 3); // eyes
+
+  ctx.restore();
+  ctx.globalAlpha = 1;
 }
 
-function showMessage(txt) {
-    dialogueBox.innerText = txt;
-    dialogueBox.style.display = 'block';
-    setTimeout(() => dialogueBox.style.display = 'none', 3000);
+// ══════════════════════════════════════════════════════════
+// OBSTACLES
+// ══════════════════════════════════════════════════════════
+function drawObs(o) {
+  ctx.save();
+
+  // ── POTHOLE ──
+  if (o.type === 'pothole') {
+    ctx.fillStyle = '#262626';
+    ctx.beginPath(); ctx.ellipse(o.x, ROAD_TOP + 24, o.w/2, 9, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#181818';
+    ctx.beginPath(); ctx.ellipse(o.x + 2, ROAD_TOP + 26, o.w/2 - 6, 5, 0.1, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#3A3A3A'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(o.x, ROAD_TOP + 24, o.w/2, 9, 0, 0, Math.PI*2); ctx.stroke();
+    // Danger mark on road before hole
+    ctx.fillStyle = 'rgba(255,100,0,0.8)';
+    ctx.font = 'bold 9px Courier New'; ctx.textAlign = 'center';
+    ctx.fillText('⚠', o.x, ROAD_TOP + 12);
+  }
+
+  // ── DOG ──
+  else if (o.type === 'dog') {
+    const x = o.x, y = FLOOR;
+    const run = Math.floor(o.frame / 7) % 2;
+    // Body
+    ctx.fillStyle = '#C07A12'; ctx.fillRect(x - 22, y - 22, 34, 14);
+    // Head
+    ctx.fillStyle = '#C07A12'; ctx.beginPath(); ctx.arc(x + 15, y - 26, 9, 0, Math.PI*2); ctx.fill();
+    // Ear
+    ctx.fillStyle = '#96600E'; ctx.fillRect(x + 17, y - 36, 5, 11);
+    // Legs
+    const lo = run ? 4 : -4;
+    ctx.fillStyle = '#96600E';
+    ctx.fillRect(x - 18, y - 8 + lo, 6, 10 - lo);
+    ctx.fillRect(x - 8, y - 8 - lo, 6, 10 + lo);
+    ctx.fillRect(x + 4, y - 8 + lo, 6, 10 - lo);
+    ctx.fillRect(x + 14, y - 8 - lo, 6, 10 + lo);
+    // Tail
+    ctx.strokeStyle = '#C07A12'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(x - 22, y - 18);
+    ctx.quadraticCurveTo(x - 38, y - 36 + run*8, x - 30, y - 28 + run*4); ctx.stroke();
+    // Teeth / mouth
+    ctx.fillStyle = '#F44336'; ctx.fillRect(x + 19, y - 19, 4, 3);
+    ctx.fillStyle = '#fff'; ctx.fillRect(x + 20, y - 22, 2, 3); ctx.fillRect(x + 22, y - 22, 2, 3);
+    // Eyes
+    ctx.fillStyle = '#222'; ctx.fillRect(x + 14, y - 30, 3, 3);
+  }
+
+  // ── BUS ──
+  else if (o.type === 'bus') {
+    const x = o.x, y = FLOOR;
+    const bw = 132, bh = 88;
+    const col = o.line === '542' ? '#1B5E20' : '#0D1B6B';
+    const dark = o.line === '542' ? '#0A3D0A' : '#060E3D';
+
+    ctx.fillStyle = col; ctx.fillRect(x, y - bh, bw, bh);
+    ctx.fillStyle = dark; ctx.fillRect(x + 2, y - bh - 7, bw - 4, 9); // roof
+
+    // Windows
+    ctx.fillStyle = '#B3E5FC';
+    ctx.fillRect(x + 4, y - bh + 6, 22, 24); // front windshield
+    for (let wi = 1; wi < 5; wi++)
+      ctx.fillRect(x + 30 + wi * 22, y - bh + 9, 17, 18);
+
+    // Line number
+    ctx.fillStyle = '#FFD600'; ctx.fillRect(x + 48, y - bh - 5, 38, 13);
+    ctx.fillStyle = '#111'; ctx.font = 'bold 10px Courier New'; ctx.textAlign = 'center';
+    ctx.fillText(o.line, x + 67, y - bh + 5);
+
+    // Front grill
+    ctx.fillStyle = '#999'; ctx.fillRect(x + 4, y - 18, 20, 14);
+    ctx.fillStyle = '#555'; ctx.fillRect(x + 6, y - 16, 16, 10);
+
+    // Wheels
+    ctx.fillStyle = '#1A1A1A';
+    ctx.beginPath(); ctx.arc(x + 22, y, 14, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + 108, y, 14, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#555'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x + 22, y, 9, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x + 108, y, 9, 0, Math.PI*2); ctx.stroke();
+
+    // ★ MIRROR — the dangerous element to duck under ★
+    // Mirror arm
+    ctx.fillStyle = '#666'; ctx.fillRect(x - 2, y - 64, 4, 12);
+    // Mirror head
+    ctx.fillStyle = '#888';
+    ctx.fillRect(x - 18, y - 68, 20, 9);
+    ctx.strokeStyle = '#AAA'; ctx.lineWidth = 1;
+    ctx.strokeRect(x - 18, y - 68, 20, 9);
+    // Mirror glass
+    ctx.fillStyle = 'rgba(150,220,255,0.6)'; ctx.fillRect(x - 16, y - 66, 16, 6);
+
+    // Warning hint (only when approaching)
+    if (o.x < W - 50 && o.x > PABLO_X - 20) {
+      ctx.fillStyle = 'rgba(255,230,0,0.92)';
+      rr(x + bw/2 - 52, y - bh - 26, 104, 19, 4); ctx.fill();
+      ctx.fillStyle = '#000'; ctx.font = 'bold 9px Courier New'; ctx.textAlign = 'center';
+      ctx.fillText('↓ AGACHATE (espejo!)', x + bw/2, y - bh - 12);
+    }
+  }
+
+  // ── CAR DOOR ──
+  else if (o.type === 'cardoor') {
+    const x = o.x, y = FLOOR;
+    // Car body
+    ctx.fillStyle = '#1565C0'; ctx.fillRect(x, y - 48, 76, 48);
+    ctx.fillStyle = '#0D47A1'; ctx.fillRect(x + 10, y - 68, 52, 22);
+    // Windows
+    ctx.fillStyle = '#B3E5FC';
+    ctx.fillRect(x + 13, y - 65, 20, 18); ctx.fillRect(x + 38, y - 65, 20, 18);
+    // Bumper
+    ctx.fillStyle = '#888'; ctx.fillRect(x, y - 8, 76, 8);
+    // Wheels
+    ctx.fillStyle = '#1A1A1A';
+    ctx.beginPath(); ctx.arc(x + 16, y, 12, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + 60, y, 12, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#555'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x + 16, y, 7, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x + 60, y, 7, 0, Math.PI*2); ctx.stroke();
+    // Door swinging open (pivot: front edge of door)
+    ctx.save();
+    ctx.translate(x + 28, y - 8);
+    ctx.rotate(-o.doorAngle);
+    ctx.fillStyle = '#1E88E5'; ctx.fillRect(-2, -42, 40, 42);
+    ctx.strokeStyle = '#0D47A1'; ctx.lineWidth = 1; ctx.strokeRect(-2, -42, 40, 42);
+    ctx.fillStyle = '#B3E5FC'; ctx.fillRect(2, -38, 32, 18);
+    // Door handle
+    ctx.fillStyle = '#888'; ctx.fillRect(32, -15, 5, 8);
+    ctx.restore();
+
+    // Hint
+    if (o.doorAngle > 0.15 && o.x < W - 30 && o.x > PABLO_X - 30) {
+      ctx.fillStyle = 'rgba(255,80,0,0.9)';
+      rr(x + 38 - 40, y - 78, 80, 18, 4); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 9px Courier New'; ctx.textAlign = 'center';
+      ctx.fillText('↑ SALTA!', x + 38, y - 65);
+    }
+  }
+
+  ctx.restore();
 }
 
-function nextLevel(n) {
-    game.level = n;
-    game.distance = 0;
-    game.obstacles = [];
-    document.getElementById('level-title').innerText = LEVELS[n].title;
-    if(n === 2) showMessage("¡Se rompió la cadena! A caminar...");
-    if(n === 3) showMessage("¡A toda velocidad tras el camión!");
+// ══════════════════════════════════════════════════════════
+// RAIN
+// ══════════════════════════════════════════════════════════
+function drawRain() {
+  if (!G.rain) return;
+  ctx.strokeStyle = 'rgba(155,205,255,0.5)'; ctx.lineWidth = 1;
+  G.drops.forEach(d => {
+    ctx.beginPath(); ctx.moveTo(d.x, d.y); ctx.lineTo(d.x - 3, d.y + d.len); ctx.stroke();
+  });
+  // Wet road sheen
+  const sheen = ctx.createLinearGradient(0, ROAD_TOP+10, 0, H);
+  sheen.addColorStop(0, 'rgba(70,100,200,0.12)');
+  sheen.addColorStop(1, 'rgba(50,70,150,0.06)');
+  ctx.fillStyle = sheen; ctx.fillRect(0, ROAD_TOP+10, W, H - ROAD_TOP - 10);
 }
 
+// ══════════════════════════════════════════════════════════
+// HUD
+// ══════════════════════════════════════════════════════════
+function drawBar(x, y, w, h, pct, col1, col2) {
+  ctx.fillStyle = '#111'; ctx.fillRect(x, y, w, h);
+  const g = ctx.createLinearGradient(x, y, x + w * pct, y);
+  g.addColorStop(0, col1); g.addColorStop(1, col2);
+  ctx.fillStyle = g; ctx.fillRect(x, y, w * Math.max(0, pct), h);
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.strokeRect(x, y, w, h);
+}
+
+function barColor(pct, good, mid, bad) {
+  return pct > 0.6 ? [good, good] : pct > 0.3 ? [mid, '#FF6B00'] : [bad, '#FF0000'];
+}
+
+function drawHUD() {
+  // Left panel
+  ctx.fillStyle = 'rgba(0,0,0,0.74)';
+  rr(8, 8, 222, 72, 7); ctx.fill();
+  ctx.strokeStyle = '#252525'; ctx.lineWidth = 1;
+  rr(8, 8, 222, 72, 7); ctx.stroke();
+
+  ctx.textAlign = 'left';
+
+  // Temp bar
+  ctx.fillStyle = '#ddd'; ctx.font = 'bold 10px Courier New';
+  ctx.fillText('🌡 Temp. del pedido', 16, 26);
+  const tc = barColor(G.temp/100, '#43A047','#FB8C00','#E53935');
+  drawBar(16, 30, 204, 13, G.temp/100, tc[0], tc[1]);
+  ctx.fillStyle = '#fff'; ctx.font = '8px Courier New';
+  ctx.fillText(Math.ceil(G.temp) + '°C', 20, 40);
+
+  // Integ bar
+  ctx.fillStyle = '#ddd'; ctx.font = 'bold 10px Courier New';
+  ctx.fillText('📦 Paquete', 16, 57);
+  const ic = barColor(G.integ/100, '#1E88E5','#FB8C00','#E53935');
+  drawBar(16, 61, 204, 13, G.integ/100, ic[0], ic[1]);
+  ctx.fillStyle = '#fff'; ctx.font = '8px Courier New';
+  ctx.fillText(Math.ceil(G.integ) + '%', 20, 71);
+
+  // Score (top right)
+  ctx.fillStyle = 'rgba(0,0,0,0.74)';
+  rr(W - 138, 8, 130, 28, 5); ctx.fill();
+  ctx.fillStyle = '#F5C518'; ctx.font = 'bold 13px Courier New'; ctx.textAlign = 'right';
+  ctx.fillText(Math.floor(G.score) + ' m', W - 13, 26);
+
+  // Speed pill
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  rr(W - 138, 40, 130, 20, 4); ctx.fill();
+  const sp = Math.floor(G.speed * 10);
+  ctx.fillStyle = '#888'; ctx.font = '9px Courier New'; ctx.textAlign = 'right';
+  ctx.fillText('velocidad  ' + sp + ' km/h', W - 12, 53);
+
+  // Rain banner
+  if (G.rain) {
+    ctx.fillStyle = 'rgba(20,50,120,0.82)';
+    rr(W/2 - 78, 8, 156, 22, 5); ctx.fill();
+    ctx.fillStyle = '#90CAF9'; ctx.font = 'bold 10px Courier New'; ctx.textAlign = 'center';
+    ctx.fillText('☔ PISO MOJADO — CUIDADO', W/2, 22);
+  }
+
+  // High score
+  if (G.highScore > 0) {
+    ctx.fillStyle = '#2a2a2a'; ctx.font = '9px Courier New'; ctx.textAlign = 'left';
+    ctx.fillText('RÉC: ' + G.highScore + 'm', 16, 91);
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// SCREENS
+// ══════════════════════════════════════════════════════════
+function drawStartScreen() {
+  ctx.fillStyle = 'rgba(0,0,0,0.62)'; ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#F5C518'; ctx.font = 'bold 42px Courier New';
+  ctx.fillText('PABLO DELIVERY', W/2, H/2 - 82);
+  ctx.fillStyle = '#CCCCCC'; ctx.font = '13px Courier New';
+  ctx.fillText('Lomas de Zamora  ·  Banfield  ·  GBA', W/2, H/2 - 54);
+
+  ctx.fillStyle = '#999'; ctx.font = '11px Courier New';
+  ctx.fillText('Llevá el pedido antes de que se enfríe 🌡  y sin romper el paquete 📦', W/2, H/2 - 22);
+  ctx.fillText('Evitá: pozos · perros · colectivos 542/160 · puertas de autos', W/2, H/2 - 4);
+
+  const blink = Math.floor(Date.now() / 560) % 2;
+  if (blink) {
+    ctx.fillStyle = '#4CAF50'; ctx.font = 'bold 15px Courier New';
+    ctx.fillText('[ ESPACIO · CLIC · TOQUE PARA EMPEZAR ]', W/2, H/2 + 42);
+  }
+  ctx.fillStyle = '#444'; ctx.font = '10px Courier New';
+  ctx.fillText('↑ SALTAR    ↓ AGACHARSE (para el espejo del colectivo)', W/2, H/2 + 72);
+}
+
+function drawGameOverScreen() {
+  ctx.fillStyle = 'rgba(0,0,0,0.70)'; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+
+  ctx.fillStyle = '#E53935'; ctx.font = 'bold 40px Courier New';
+  ctx.fillText('GAME OVER', W/2, H/2 - 80);
+
+  const reason = G.temp <= 0
+    ? '🥶 El pedido llegó FRÍO — cliente enojadísimo'
+    : '💥 El paquete quedó destruido — devolución';
+  ctx.fillStyle = '#EEEEEE'; ctx.font = '13px Courier New';
+  ctx.fillText(reason, W/2, H/2 - 46);
+
+  ctx.fillStyle = '#F5C518'; ctx.font = 'bold 22px Courier New';
+  ctx.fillText('Distancia: ' + Math.floor(G.score) + ' metros', W/2, H/2 - 8);
+
+  if (Math.floor(G.score) >= G.highScore) {
+    G.highScore = Math.floor(G.score);
+    ctx.fillStyle = '#76FF03'; ctx.font = 'bold 15px Courier New';
+    ctx.fillText('🏆 ¡NUEVO RÉCORD!', W/2, H/2 + 22);
+  } else {
+    ctx.fillStyle = '#777'; ctx.font = '12px Courier New';
+    ctx.fillText('Récord: ' + G.highScore + ' metros', W/2, H/2 + 22);
+  }
+
+  const blink = Math.floor(Date.now() / 560) % 2;
+  if (blink) {
+    ctx.fillStyle = '#4CAF50'; ctx.font = 'bold 13px Courier New';
+    ctx.fillText('[ ESPACIO · CLIC · TOQUE PARA REINTENTAR ]', W/2, H/2 + 65);
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// SPAWNING
+// ══════════════════════════════════════════════════════════
+function spawnObs() {
+  const types = ['pothole','pothole','dog','dog','bus','cardoor','cardoor'];
+  const type = types[Math.floor(Math.random() * types.length)];
+  const o = { type, x: W + 100, frame: 0 };
+  if (type === 'pothole') o.w = 32 + Math.random() * 38;
+  if (type === 'bus')     o.line = Math.random() < 0.5 ? '542' : '160';
+  if (type === 'cardoor') { o.doorAngle = 0; o.opening = true; }
+  G.obs.push(o);
+}
+
+// ══════════════════════════════════════════════════════════
+// COLLISION
+// ══════════════════════════════════════════════════════════
+function checkCollisions() {
+  if (G.invTimer > 0) return;
+  const p = G.pablo;
+  const duck = p.ducking;
+  const pTop  = p.y - (duck ? H_DUCK : H_STAND);
+  const pBot  = p.y;
+  const pLeft = PABLO_X - 22;
+  const pRight = PABLO_X + 24;
+
+  for (const o of G.obs) {
+    let hit = false;
+
+    if (o.type === 'pothole') {
+      // Hit if on (or near) ground, wheels fall in
+      if (!p.jumping || p.y > FLOOR - 8) {
+        if (PABLO_X > o.x - o.w/2 - 10 && PABLO_X < o.x + o.w/2 + 10) hit = true;
+      }
+    }
+    else if (o.type === 'dog') {
+      // Dog: low obstacle, clear by jumping
+      const dTop = FLOOR - 28, dBot = FLOOR;
+      const dLeft = o.x - 24, dRight = o.x + 18;
+      if (pRight > dLeft && pLeft < dRight && pTop < dBot && pBot > dTop) hit = true;
+    }
+    else if (o.type === 'bus') {
+      // Dangerous zone: upper body FLOOR-88 to FLOOR-42
+      // Ducked Pablo top = FLOOR - 38 = 277; danger bottom = FLOOR - 42 = 273 → 277 > 273 → NO HIT ✅
+      // Standing Pablo top = FLOOR - 82 = 233; danger bottom = 273 → 233 < 273 → HIT ✅
+      const bTop = FLOOR - 88, bBot = FLOOR - 42;
+      const bLeft = o.x - 2, bRight = o.x + 132;
+      if (pRight > bLeft && pLeft < bRight && pTop < bBot && pBot > bTop) {
+        if (!duck) hit = true;
+      }
+    }
+    else if (o.type === 'cardoor') {
+      if (o.doorAngle > 0.22) {
+        const dLeft = o.x + 24, dRight = o.x + 70;
+        const dTop = FLOOR - 48, dBot = FLOOR - 6;
+        if (pRight > dLeft && pLeft < dRight && pTop < dBot && pBot > dTop) hit = true;
+      }
+    }
+
+    if (hit) {
+      G.integ -= 28;
+      if (G.integ < 0) G.integ = 0;
+      G.invTimer = 85;
+      break;
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// UPDATE
+// ══════════════════════════════════════════════════════════
 function update() {
-    if(!game.active) return;
-    game.frame++;
-    game.distance += 1;
+  if (G.phase !== 'play') return;
+  G.frame++;
+  const p = G.pablo;
+  p.tick++;
 
-    // Física
-    if(game.isJumping) {
-        game.pabloY += game.jumpV;
-        game.jumpV += 0.7;
-        if(game.pabloY >= 0) { game.pabloY = 0; game.isJumping = false; }
+  G.bgX   += G.speed * 0.48;
+  G.roadX += G.speed;
+
+  G.score += G.speed * 0.048;
+  G.speed  = Math.min(13, 4 + G.score * 0.0022);
+
+  G.temp -= 0.022 + G.speed * 0.0008;
+  if (G.temp < 0) G.temp = 0;
+
+  // Pablo physics
+  if (p.jumping) {
+    p.vy += GRAVITY; p.y += p.vy;
+    if (p.y >= FLOOR) { p.y = FLOOR; p.vy = 0; p.jumping = false; }
+  }
+
+  // Rain toggle
+  G.rainTimer--;
+  if (G.rainTimer <= 0) {
+    G.rain = !G.rain;
+    G.rainTimer = G.rain ? (160 + Math.random() * 220) : (360 + Math.random() * 280);
+    if (!G.rain) G.drops = [];
+  }
+  if (G.rain && Math.random() < 0.48)
+    G.drops.push({ x: Math.random() * W, y: -10, len: 10 + Math.random() * 12, sp: 9 + Math.random() * 5 });
+  G.drops = G.drops.filter(d => d.y < H + 20);
+  G.drops.forEach(d => { d.y += d.sp; d.x -= 2.5; });
+
+  // Spawn
+  G.spawnCD--;
+  if (G.spawnCD <= 0) {
+    spawnObs();
+    G.spawnCD = Math.max(52, 100 - Math.floor(G.score * 0.09));
+  }
+
+  // Move obstacles
+  G.obs = G.obs.filter(o => o.x > -220);
+  G.obs.forEach(o => {
+    o.x -= G.speed; o.frame++;
+    if (o.type === 'cardoor') {
+      if (o.opening) {
+        o.doorAngle += 0.022;
+        if (o.doorAngle >= 1.1) o.opening = false;
+      } else {
+        o.doorAngle -= 0.014;
+        if (o.doorAngle < 0) { o.doorAngle = 0; o.opening = true; }
+      }
     }
+  });
 
-    // Obstáculos
-    if(game.frame % 80 === 0) game.obstacles.push(new Obstacle(canvas.width));
-    game.obstacles.forEach((o, i) => {
-        o.update();
-        if(o.x < -100) game.obstacles.splice(i, 1);
-        // Colisión
-        if(o.x < 80 && o.x > 30 && game.pabloY > -30) {
-            if(game.level === 3) {
-                game.level = 4;
-                nextLevel(4);
-                showMessage("El cuerpo quedó... el alma sigue.");
-            }
-        }
-    });
+  if (G.invTimer > 0) G.invTimer--;
+  checkCollisions();
 
-    // Progresión
-    if(game.distance > 800 && game.level === 1) nextLevel(2);
-    if(game.distance > 800 && game.level === 2) nextLevel(3);
-
-    draw();
-    requestAnimationFrame(update);
+  if (G.temp <= 0 || G.integ <= 0) G.phase = 'over';
 }
 
-function draw() {
-    const lv = LEVELS[game.level];
-    ctx.fillStyle = lv.bg;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    ctx.fillStyle = lv.ground;
-    ctx.fillRect(0, canvas.height - 20, canvas.width, 20);
-
-    // PABLO
-    ctx.fillStyle = game.level === 4 ? "#00f2ff" : "#333";
-    ctx.fillRect(50, canvas.height - 70 + game.pabloY, 30, 50); // Pablo
-    
-    ctx.fillStyle = "#ff5722"; // Mochila
-    ctx.fillRect(40, canvas.height - 65 + game.pabloY, 12, 30);
-
-    game.obstacles.forEach(o => o.draw());
+// ══════════════════════════════════════════════════════════
+// RENDER
+// ══════════════════════════════════════════════════════════
+function render() {
+  ctx.clearRect(0, 0, W, H);
+  drawBackground();
+  drawRoad();
+  G.obs.filter(o => o.type === 'pothole').forEach(drawObs);
+  drawPablo();
+  G.obs.filter(o => o.type !== 'pothole').forEach(drawObs);
+  drawRain();
+  drawHUD();
+  if (G.phase === 'start') drawStartScreen();
+  if (G.phase === 'over')  drawGameOverScreen();
 }
 
-function jump() { if(!game.isJumping) { game.isJumping = true; game.jumpV = -13; } }
-window.addEventListener('keydown', jump);
-window.addEventListener('touchstart', jump);
+// ══════════════════════════════════════════════════════════
+// INPUT
+// ══════════════════════════════════════════════════════════
+function doJump() {
+  if (!G.pablo.jumping) { G.pablo.jumping = true; G.pablo.vy = JUMP_V; }
+}
 
-update();
+function action() {
+  if (G.phase === 'start') { G.phase = 'play'; return; }
+  if (G.phase === 'over')  { const hs = G.highScore; init(); G.highScore = hs; G.phase = 'play'; return; }
+  doJump();
+}
+
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp')  { e.preventDefault(); action(); }
+  if (e.code === 'ArrowDown') { e.preventDefault(); G.pablo.ducking = true; }
+});
+document.addEventListener('keyup', e => {
+  if (e.code === 'ArrowDown') G.pablo.ducking = false;
+});
+
+canvas.addEventListener('click', action);
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (G.phase !== 'play') { action(); return; }
+  const r = canvas.getBoundingClientRect();
+  const ty = (e.touches[0].clientY - r.top) / r.height;
+  if (ty < 0.55) doJump(); else G.pablo.ducking = true;
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  G.pablo.ducking = false;
+}, { passive: false });
+
+// ══════════════════════════════════════════════════════════
+// LOOP
+// ══════════════════════════════════════════════════════════
+(function loop() { update(); render(); requestAnimationFrame(loop); })();
 </script>
 </body>
 </html>
