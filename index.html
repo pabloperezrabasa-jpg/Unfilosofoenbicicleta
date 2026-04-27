@@ -1,917 +1,195 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Pablo: un Filósofo en bicicleta</title>
-<style>
-* { margin:0; padding:0; box-sizing:border-box; }
-body {
-  background:#07070D;
-  display:flex; flex-direction:column;
-  align-items:center; justify-content:center;
-  min-height:100vh;
-  user-select:none; -webkit-user-select:none;
-  overflow:hidden;
-}
-#ttl {
-  color:#F5C518;
-  font:bold 10px 'Courier New',monospace;
-  letter-spacing:3px; text-transform:uppercase;
-  margin-bottom:7px; text-align:center;
-}
-canvas { display:block; border:2px solid #181818; max-width:100vw; }
-#ftr {
-  color:#222; font:9px 'Courier New',monospace;
-  margin-top:5px; text-align:center; letter-spacing:1px;
-}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pablo: Una Odisea en el Sur</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: 'Courier New', Courier, monospace; color: white; touch-action: none; }
+        canvas { display: block; background: #87CEEB; margin: 0 auto; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; text-shadow: 2px 2px #000; }
+        #dialogue { position: absolute; bottom: 20%; width: 100%; text-align: center; font-size: 1.2rem; background: rgba(0,0,0,0.6); padding: 10px 0; display: none; }
+    </style>
 </head>
 <body>
-<div id="ttl">★ pablo: un filósofo en bicicleta ★ lomas de zamora — gba ★</div>
-<canvas id="c" width="800" height="420"></canvas>
-<div id="ftr">↑ espacio / flecha arriba: saltar &nbsp;·&nbsp; ↓: agacharse &nbsp;·&nbsp; toca arriba / abajo en móvil</div>
+    <div id="ui">
+        <div id="level-title">NIVEL 1: Banfield en Bici</div>
+        <div id="stats">Pedido: 100% | Integridad: 100%</div>
+    </div>
+    <div id="dialogue"></div>
+    <canvas id="gameCanvas"></canvas>
+
 <script>
-const canvas = document.getElementById('c');
-const ctx    = canvas.getContext('2d');
-const W=800, H=420, FLOOR=335, ROAD_TOP=300;
-const PABLO_RX=148;
-const JUMP_V=-14.5, GRAVITY=0.60;
-const H_STAND=85, H_DUCK=40;
-const DEST_W=158, DEST_H=128, DOOR_W=30, DOOR_H=44;
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const dialogueBox = document.getElementById('dialogue');
 
-const sr = n=>{ const s=Math.sin(n*127.1+311.7)*43758.5453; return s-Math.floor(s); };
-
-function rr(x,y,w,h,r=5){
-  ctx.beginPath();
-  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.arcTo(x+w,y,x+w,y+r,r);
-  ctx.lineTo(x+w,y+h-r); ctx.arcTo(x+w,y+h,x+w-r,y+h,r);
-  ctx.lineTo(x+r,y+h); ctx.arcTo(x,y+h,x,y+h-r,r);
-  ctx.lineTo(x,y+r); ctx.arcTo(x,y,x+r,y,r);
-  ctx.closePath();
+// Configuración de pantalla
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = Math.min(window.innerHeight, 400);
 }
-function dk(hex,a){
-  const n=parseInt(hex.slice(1),16);
-  const clamp=(v)=>Math.max(0,Math.min(255,v));
-  return '#'+((1<<24)|(clamp((n>>16)+a)<<16)|(clamp(((n>>8)&0xFF)+a)<<8)|clamp((n&0xFF)+a)).toString(16).slice(1);
-}
+window.addEventListener('resize', resize);
+resize();
 
-/* ════════════════════ LEVELS ════════════════════ */
-const LEVELS=[
-  { n:1, title:'Nivel 1', sub:'La primera entrega',
-    dest:'Casa de Doña Rosa', addr:'Sarmiento 742, Lomas de Zamora',
-    dist:480, spd:3.9, spc:110, hasManuel:false,
-    quote:'"El comienzo es la mitad del todo." — Aristóteles',
-    wc:'#EAD8B1', rc:'#7A3D10', cust:'👵', cName:'Doña Rosa',
-    rain:false, night:false },
+// Estados del Juego
+let gameState = {
+    level: 1,
+    gameOver: false,
+    distance: 0,
+    speed: 5,
+    pabloY: 0,
+    isJumping: false,
+    isDucking: false,
+    jumpV: 0,
+    obstacles: [],
+    frame: 0,
+    messageTimer: 0
+};
 
-  { n:2, title:'Nivel 2', sub:'El camino de Banfield',
-    dest:'Ferretería Don Ángel', addr:'Av. H. Yrigoyen 1850, Banfield',
-    dist:700, spd:4.3, spc:90, hasManuel:true, manuelAt:350,
-    quote:'"La amistad es un alma que habita dos cuerpos." — Aristóteles',
-    wc:'#C8DFF0', rc:'#1A3A6B', cust:'👷', cName:'Don Ángel',
-    rain:false, night:false },
+// Configuración de Niveles
+const LEVELS = {
+    1: { title: "NIVEL 1: Lomas - El Reparto", bg: "#87CEEB", ground: "#555", mode: "bike" },
+    2: { title: "NIVEL 2: La Vereda - Caminando", bg: "#a8dadc", ground: "#777", mode: "walk" },
+    3: { title: "NIVEL 3: Camino Negro - El Camión", bg: "#457b9d", ground: "#333", mode: "truck" },
+    4: { title: "NIVEL 4: El Plano Espectral", bg: "#1d3557", ground: "#f1faee", mode: "soul" }
+};
 
-  { n:3, title:'Nivel 3', sub:'El aguacero',
-    dest:'Club Social Banfield', addr:'Espora 455, Banfield',
-    dist:900, spd:4.8, spc:76, hasManuel:false,
-    quote:'"No hay viento favorable para quien no sabe adónde va." — Séneca',
-    wc:'#C8E8C0', rc:'#1B5E20', cust:'🧑', cName:'El Socio',
-    rain:true, night:false },
-
-  { n:4, title:'Nivel 4', sub:'Hora pico',
-    dest:'Librería El Faro', addr:'Gral. Paz 2100, Lomas de Zamora',
-    dist:1150, spd:5.3, spc:62, hasManuel:true, manuelAt:580,
-    quote:'"Soy un ciudadano del mundo." — Diógenes de Sinope',
-    wc:'#F0E0C0', rc:'#4A2800', cust:'📚', cName:'La Librera',
-    rain:false, night:false },
-
-  { n:5, title:'Nivel 5', sub:'La noche de Lomas',
-    dest:'Facultad de Filosofía UNLaM', addr:'Meléndez 1830, Lomas de Zamora',
-    dist:1400, spd:5.9, spc:50, hasManuel:true, manuelAt:700,
-    quote:'"Solo sé que no sé nada." — Sócrates',
-    wc:'#D0C8E8', rc:'#2A1B6B', cust:'🎓', cName:'La Decana',
-    rain:true, night:true },
-];
-
-/* ════════════════════ STATE ════════════════════ */
-let G={highScore:0};
-
-function initGame(){
-  G={
-    phase:'start', frame:0,
-    levelIdx:0, totalScore:0, highScore:G.highScore||0,
-    cfg:null, progress:0, speed:0,
-    bgX:0, roadX:0, temp:100, integ:100, invTimer:0, introTimer:0,
-    pablo:{y:FLOOR,vy:0,jumping:false,ducking:false,tick:0},
-    obs:[], spawnCD:0,
-    rain:false, rainTimer:300, drops:[],
-    manuelBuilding:null, manuelSpawned:false, manuelWaveTimer:0,
-    destHouseX:0,
-    pabloX:PABLO_RX, doorOpen:0, delivTimer:0, delivPhase:0, levelScore:0,
-  };
-}
-initGame();
-
-function startLevel(idx, preserve=false){
-  const cfg=LEVELS[Math.min(idx,LEVELS.length-1)];
-  const pT=G.temp, pI=G.integ;
-  G.levelIdx=idx; G.cfg=cfg;
-  G.progress=0; G.speed=cfg.spd;
-  G.bgX=0; G.roadX=0;
-  G.spawnCD=cfg.spc; G.obs=[]; G.drops=[];
-  G.rain=cfg.rain; G.rainTimer=G.rain?999999:(320+Math.random()*300);
-  G.invTimer=0;
-  G.manuelBuilding=null; G.manuelSpawned=false; G.manuelWaveTimer=0;
-  G.temp=preserve?Math.min(100,pT+38):100;
-  G.integ=preserve?Math.min(100,pI+28):100;
-  G.pablo={y:FLOOR,vy:0,jumping:false,ducking:false,tick:0};
-  G.pabloX=PABLO_RX; G.destHouseX=0;
-  G.doorOpen=0; G.delivTimer=0; G.delivPhase=0; G.levelScore=0;
-  G.phase='intro'; G.introTimer=185;
-}
-
-/* ════════════════════ BG DRAWING ════════════════════ */
-function isNight(){ return G.cfg&&G.cfg.night; }
-
-function drawSky(){
-  const n=isNight();
-  const c0=n?(G.rain?'#18243A':'#0D1525'):(G.rain?'#5577AA':'#7EC8E3');
-  const c1=n?(G.rain?'#283850':'#1A2540'):(G.rain?'#7A8FA0':'#C0E4F5');
-  const g=ctx.createLinearGradient(0,0,0,ROAD_TOP);
-  g.addColorStop(0,c0); g.addColorStop(1,c1);
-  ctx.fillStyle=g; ctx.fillRect(0,0,W,ROAD_TOP);
-  if(n){
-    for(let i=0;i<55;i++){
-      ctx.globalAlpha=0.6+sr(i*7+3)*0.4;
-      ctx.fillStyle='#fff';
-      ctx.beginPath(); ctx.arc(sr(i*7)*W, sr(i*7+1)*ROAD_TOP*.8, sr(i*7+2)*1.6+.4, 0, Math.PI*2); ctx.fill();
+class Obstacle {
+    constructor(type, x) {
+        this.x = x;
+        this.type = type; // 'hole', 'dog', 'bus', 'door', 'cloud'
+        this.w = 50;
+        this.h = 30;
+        this.y = canvas.height - 50;
+        
+        if(type === 'bus') { this.w = 120; this.h = 60; this.y = canvas.height - 80; }
+        if(type === 'cloud') { this.y = canvas.height - 120; }
     }
-    ctx.globalAlpha=1;
-  }
-}
 
-function drawClouds(){
-  const n=isNight();
-  for(let i=0;i<6;i++){
-    const cx=((i*145+65-G.bgX*.08)%(W+130)+W+130)%(W+130)-65;
-    const cy=15+sr(i*5+1)*55, cw=75+sr(i*5+2)*65;
-    const a=G.rain?.55:(n?.12:.8);
-    ctx.fillStyle=G.rain?`rgba(150,155,178,${a})`:(n?`rgba(38,52,88,${a})`:`rgba(255,255,255,${a})`);
-    ctx.beginPath(); ctx.ellipse(cx,cy,cw/2,14,0,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(cx+cw*.2,cy-8,cw*.3,10,0,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(cx-cw*.25,cy-4,cw*.25,9,0,0,Math.PI*2); ctx.fill();
-  }
-}
-
-function drawHouseAt(sx,seed){
-  const n=isNight();
-  const w=78+sr(seed)*55, h=65+sr(seed+1)*55;
-  const walls=['#EAD8B1','#D2C49A','#C8DFCA','#E8C8C8','#D0DFF0','#F0E0C8'];
-  const roofs=['#7A3D10','#9B4A1F','#5C2D0A','#3D2B1F','#6B3B2A'];
-  let wc=walls[Math.floor(sr(seed+2)*walls.length)];
-  let rc=roofs[Math.floor(sr(seed+3)*roofs.length)];
-  if(n){wc=dk(wc,-52);rc=dk(rc,-40);}
-  const by=ROAD_TOP, ty=by-h;
-  ctx.fillStyle=wc; ctx.fillRect(sx,ty,w,h);
-  ctx.fillStyle=rc;
-  ctx.beginPath(); ctx.moveTo(sx-5,ty); ctx.lineTo(sx+w/2,ty-22-sr(seed+4)*14); ctx.lineTo(sx+w+5,ty); ctx.fill();
-  ctx.fillStyle='#6B3300'; ctx.fillRect(sx+w/2-7,by-22,14,22);
-  ctx.fillStyle='#8B4413'; ctx.beginPath(); ctx.arc(sx+w/2,by-22,7,Math.PI,0); ctx.fill();
-  const nw=1+Math.floor(sr(seed+5)*2);
-  for(let i=0;i<nw;i++){
-    const wx=sx+10+i*(w/(nw+1));
-    const lit=!n||sr(seed+i*13+6)>.38;
-    ctx.fillStyle=lit?(n?'#FFA040':(G.rain?'#3E6880':'#AED6F1')):(n?'#0A1020':'#335566');
-    ctx.fillRect(wx,ty+15,15,13);
-  }
-  ctx.strokeStyle=n?'#555':'#CCC'; ctx.lineWidth=1;
-  for(let fx=sx;fx<sx+w;fx+=8){ ctx.beginPath(); ctx.moveTo(fx,by); ctx.lineTo(fx,by+12); ctx.stroke(); }
-  ctx.fillStyle=n?'#8A7A60':'#C5B28A'; ctx.fillRect(sx,by,w,7);
-}
-
-function drawTreeAt(sx,seed){
-  const n=isNight();
-  const th=50+sr(seed)*34, tr=22+sr(seed+1)*14, by=ROAD_TOP;
-  ctx.fillStyle=n?'#2A1800':'#6B4220'; ctx.fillRect(sx-4,by-th,8,th);
-  ctx.fillStyle=n?(G.rain?'#152A1E':'#1B3020'):(G.rain?'#2A5530':'#3A7D44');
-  ctx.beginPath(); ctx.arc(sx,by-th-tr+14,tr,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle=n?'#102018':(G.rain?'#1F3F2A':'#2D6135');
-  ctx.beginPath(); ctx.arc(sx-tr*.4,by-th-tr*.5+6,tr*.7,0,Math.PI*2); ctx.fill();
-}
-
-function drawSignAt(sx,seed){
-  const texts=['LOMAS\nDE ZAMORA','BANFIELD','ALMACÉN\nDON BETO','FERRETERÍA\nZAMORA','REMISERÍA\nBANFIELD','COLCHONES\nY SOMMIERS','VERDULERÍA\nLOS TILOS'];
-  const t=texts[Math.floor(sr(seed)*texts.length)];
-  ctx.fillStyle='#666'; ctx.fillRect(sx+29,ROAD_TOP-65,4,65);
-  ctx.fillStyle='#FFD700'; ctx.fillRect(sx,ROAD_TOP-85,70,26);
-  ctx.strokeStyle='#B8860B'; ctx.lineWidth=1.5; ctx.strokeRect(sx,ROAD_TOP-85,70,26);
-  ctx.fillStyle='#222'; ctx.font='bold 8px Courier New'; ctx.textAlign='center';
-  t.split('\n').forEach((l,i)=>ctx.fillText(l,sx+35,ROAD_TOP-76+i*11));
-}
-
-/* ════════════════════ MANUEL FERREYRA ════════════════════ */
-function drawManuelBuilding(sx){
-  const n=isNight(), bw=104, bh=172, by=ROAD_TOP;
-  ctx.fillStyle=n?'#141E2E':'#323E50'; ctx.fillRect(sx,by-bh,bw,bh);
-  for(let row=0;row<5;row++){
-    for(let col=0;col<3;col++){
-      const wx=sx+8+col*30, wy=by-bh+15+row*28;
-      const isBalc=(row===0&&col===1);
-      const lit=isBalc||(sr(row*41+col*17+3)>.3);
-      ctx.fillStyle=lit?(n?'#FFA040':'#FFE082'):(n?'#0A1020':'#1A2530');
-      ctx.fillRect(wx,wy,20,16);
+    draw() {
+        ctx.fillStyle = this.type === 'bus' ? '#e63946' : '#000';
+        if(gameState.level === 4) ctx.fillStyle = "rgba(255,255,255,0.5)";
+        ctx.fillRect(this.x, this.y, this.w, this.h);
+        
+        ctx.fillStyle = "white";
+        ctx.font = "10px Arial";
+        ctx.fillText(this.type.toUpperCase(), this.x + 5, this.y + 15);
     }
-  }
-  // Balcony
-  const baly=by-bh+14;
-  ctx.fillStyle=n?'#1E2C3E':'#28374A'; ctx.fillRect(sx+18,baly,66,30);
-  ctx.fillStyle='#3E4E5E'; ctx.fillRect(sx+16,baly+29,70,7);
-  ctx.strokeStyle='#7A8898'; ctx.lineWidth=1;
-  ctx.beginPath(); ctx.moveTo(sx+16,baly+29); ctx.lineTo(sx+86,baly+29); ctx.stroke();
-  for(let bx=sx+18;bx<=sx+84;bx+=10){ ctx.beginPath(); ctx.moveTo(bx,baly+29); ctx.lineTo(bx,baly+36); ctx.stroke(); }
-  // Vinyl record decoration
-  ctx.fillStyle='#111'; ctx.beginPath(); ctx.arc(sx+bw-16,by-bh+35,12,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='#333'; ctx.beginPath(); ctx.arc(sx+bw-16,by-bh+35,5,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='#555'; ctx.beginPath(); ctx.arc(sx+bw-16,by-bh+35,2,0,Math.PI*2); ctx.fill();
-  // Neon sign
-  const waving=G.manuelWaveTimer>0;
-  const blink=waving&&Math.floor(G.frame/4)%3!==0;
-  const nc=blink?'#FF44FF':(n?'#CC00CC':'#990099');
-  if(waving){ ctx.fillStyle='rgba(255,0,255,0.14)'; ctx.fillRect(sx+4,by-bh-30,bw-8,26); }
-  ctx.fillStyle=nc; ctx.font='bold 11px Courier New'; ctx.textAlign='center';
-  ctx.fillText('FERREYRA',sx+bw/2,by-bh-15);
-  ctx.fillText('▶ DJ ◀',sx+bw/2,by-bh-3);
-  if(waving) drawManuelWaving(sx+bw/2,baly+28);
 }
 
-function drawManuelWaving(cx,by){
-  // Body
-  ctx.fillStyle='#0A0A0A'; ctx.fillRect(cx-9,by-34,18,22);
-  // Head
-  ctx.fillStyle='#FDBCB4'; ctx.beginPath(); ctx.arc(cx,by-40,8,0,Math.PI*2); ctx.fill();
-  // Headphones
-  ctx.strokeStyle='#111'; ctx.lineWidth=2.5;
-  ctx.beginPath(); ctx.arc(cx,by-42,10,-Math.PI*.9,Math.PI*.08); ctx.stroke();
-  ctx.fillStyle='#111'; ctx.fillRect(cx-13,by-48,5,6); ctx.fillRect(cx+8,by-48,5,6);
-  // Waving arm
-  const wave=Math.sin(G.frame*.22)*12;
-  ctx.strokeStyle='#FDBCB4'; ctx.lineWidth=3.5;
-  ctx.beginPath(); ctx.moveTo(cx+9,by-28); ctx.lineTo(cx+20+wave*.4,by-16-wave); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(cx-9,by-28); ctx.lineTo(cx-15,by-18); ctx.stroke();
-  // Speech bubble
-  const msgs=['¡DALE FLACO!','¡PA\'LOS LIBROS!','¡NO SE ENFRÍA!','¡BOOOOM!','¡FILOSOFÍA!'];
-  const msg=msgs[Math.floor(G.frame/58)%msgs.length];
-  const tw=msg.length*6.4+16;
-  ctx.fillStyle='rgba(255,255,255,0.97)'; rr(cx+18,by-60,tw,17,4); ctx.fill();
-  ctx.fillStyle='#111'; ctx.font='bold 8px Courier New'; ctx.textAlign='left';
-  ctx.fillText(msg,cx+26,by-47);
-  if(G.manuelWaveTimer>200){
-    ctx.fillStyle='rgba(255,200,0,0.92)'; rr(cx-52,by-82,104,19,4); ctx.fill();
-    ctx.fillStyle='#111'; ctx.font='bold 9px Courier New'; ctx.textAlign='center';
-    ctx.fillText('+10°C de ánimo 🔥',cx,by-68);
-  }
-}
+function update() {
+    if(gameState.gameOver) return;
 
-/* ════════════════════ ROAD ════════════════════ */
-function drawRoad(){
-  const n=isNight();
-  ctx.fillStyle=n?'#888070':'#C2AD90'; ctx.fillRect(0,ROAD_TOP-2,W,12);
-  ctx.fillStyle=n?'#3A3A3A':'#545454'; ctx.fillRect(0,ROAD_TOP+10,W,H-ROAD_TOP-10);
-  ctx.strokeStyle=n?'#AAAAAA':'#EEEEEE'; ctx.lineWidth=2;
-  ctx.beginPath(); ctx.moveTo(0,ROAD_TOP+10); ctx.lineTo(W,ROAD_TOP+10); ctx.stroke();
-  ctx.strokeStyle='#D4B800'; ctx.lineWidth=3;
-  ctx.setLineDash([28,18]); ctx.lineDashOffset=-(G.roadX%46);
-  ctx.beginPath(); ctx.moveTo(0,ROAD_TOP+44); ctx.lineTo(W,ROAD_TOP+44); ctx.stroke();
-  ctx.setLineDash([]);
-  const cp=190, cs=Math.floor(G.roadX/cp);
-  for(let i=cs;i<=cs+5;i++){
-    const cx=i*cp-(G.roadX%cp), se=i*17+9;
-    ctx.fillStyle=n?'#3A3A3A':'#484848';
-    ctx.fillRect(cx+sr(se)*80,ROAD_TOP+18+sr(se+1)*22,2+sr(se+2)*7,1);
-    ctx.fillRect(cx+sr(se+3)*80,ROAD_TOP+20+sr(se+4)*22,1,3+sr(se+5)*8);
-  }
-  if(G.rain){
-    const sh=ctx.createLinearGradient(0,ROAD_TOP+10,0,H);
-    sh.addColorStop(0,'rgba(80,110,200,0.14)'); sh.addColorStop(1,'rgba(50,70,150,0.06)');
-    ctx.fillStyle=sh; ctx.fillRect(0,ROAD_TOP+10,W,H-ROAD_TOP-10);
-    const pp=220, ps=Math.floor(G.roadX/pp);
-    for(let i=ps;i<=ps+4;i++){
-      const px=i*pp-(G.roadX%pp)+60, se=i*31+5;
-      ctx.fillStyle='rgba(90,120,180,0.18)';
-      ctx.beginPath(); ctx.ellipse(px+sr(se)*100,ROAD_TOP+22+sr(se+1)*35,20+sr(se+2)*25,5,0,0,Math.PI*2); ctx.fill();
+    gameState.frame++;
+    gameState.distance += gameState.speed / 10;
+
+    // Lógica de Salto/Gravedad
+    if(gameState.isJumping) {
+        gameState.pabloY += gameState.jumpV;
+        gameState.jumpV += 0.8; // Gravedad
+        if(gameState.pabloY >= 0) {
+            gameState.pabloY = 0;
+            gameState.isJumping = false;
+        }
     }
-  }
-}
 
-/* ════════════════════ PABLO (RIDING) ════════════════════ */
-function drawPabloRiding(px,py){
-  const t=G.pablo.tick, duck=G.pablo.ducking;
-  if(G.invTimer>0&&Math.floor(G.invTimer/5)%2===1) ctx.globalAlpha=0.28;
-  ctx.save(); ctx.translate(px,py);
-  if(duck) ctx.scale(1,0.46);
-  const wr=18, wrot=t*.22;
-  function wheel(wx){
-    ctx.strokeStyle='#1A1A1A'; ctx.lineWidth=5;
-    ctx.beginPath(); ctx.arc(wx,0,wr,0,Math.PI*2); ctx.stroke();
-    ctx.strokeStyle='#4E6070'; ctx.lineWidth=1.5;
-    for(let a=0;a<Math.PI*2;a+=Math.PI/3){
-      ctx.beginPath(); ctx.moveTo(wx,0); ctx.lineTo(wx+Math.cos(a+wrot)*wr,Math.sin(a+wrot)*wr); ctx.stroke();
+    // Generar Obstáculos
+    if(gameState.frame % 100 === 0) {
+        let type = 'hole';
+        if(gameState.level === 1) type = Math.random() > 0.5 ? 'hole' : 'bus';
+        if(gameState.level === 2) type = 'dog';
+        if(gameState.level === 3) type = 'bus';
+        if(gameState.level === 4) type = 'cloud';
+        gameState.obstacles.push(new Obstacle(type, canvas.width));
     }
-    ctx.fillStyle='#2A2A2A'; ctx.beginPath(); ctx.arc(wx,0,4,0,Math.PI*2); ctx.fill();
-  }
-  wheel(-22); wheel(22);
-  ctx.strokeStyle='#C62828'; ctx.lineWidth=3;
-  ctx.beginPath(); ctx.moveTo(-22,0); ctx.lineTo(0,-22); ctx.lineTo(22,0); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(0,-22); ctx.lineTo(0,-35); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(0,-35); ctx.lineTo(18,-31); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(-6,-30); ctx.lineTo(6,-30); ctx.stroke();
-  const lp=Math.sin(t*.22)*7;
-  ctx.fillStyle='#37474F';
-  ctx.fillRect(-8,-46+lp,8,24); ctx.fillRect(0,-46-lp,8,24);
-  ctx.fillStyle='#111';
-  ctx.fillRect(-10,-22+lp,12,6); ctx.fillRect(0,-22-lp,12,6);
-  ctx.fillStyle='#1565C0'; ctx.fillRect(-10,-68,20,26);
-  ctx.fillStyle='#B71C1C'; ctx.fillRect(-28,-79,20,42);
-  ctx.fillStyle='#FFCDD2'; ctx.fillRect(-26,-77,16,38);
-  ctx.strokeStyle='#EF9A9A'; ctx.lineWidth=1;
-  for(let ly=-71;ly<-40;ly+=7){ ctx.beginPath(); ctx.moveTo(-26,ly); ctx.lineTo(-10,ly); ctx.stroke(); }
-  ctx.strokeStyle='#C62828'; ctx.lineWidth=2;
-  ctx.beginPath(); ctx.moveTo(-10,-74); ctx.lineTo(-4,-60); ctx.stroke();
-  ctx.fillStyle='#FDBCB4'; ctx.beginPath(); ctx.arc(0,-79,10,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='#D32F2F'; ctx.fillRect(-12,-92,24,12);
-  ctx.fillStyle='#B71C1C'; ctx.fillRect(-12,-92,24,3); ctx.fillRect(-16,-81,9,5);
-  ctx.fillStyle='#333'; ctx.fillRect(-4,-81,3,3); ctx.fillRect(1,-81,3,3);
-  ctx.restore(); ctx.globalAlpha=1;
-}
 
-/* ════════════════════ PABLO (WALKING) ════════════════════ */
-function drawPabloWalking(px){
-  const t=G.pablo.tick, ls=Math.sin(t*.2)*12;
-  ctx.save(); ctx.translate(px,FLOOR);
-  ctx.fillStyle='#37474F';
-  ctx.save(); ctx.rotate(ls*.032); ctx.fillRect(-5,-30,9,20); ctx.fillStyle='#111'; ctx.fillRect(-7,-10,11,6); ctx.restore();
-  ctx.save(); ctx.rotate(-ls*.032); ctx.fillRect(-4,-32,9,20); ctx.fillStyle='#111'; ctx.fillRect(-4,-12,11,6); ctx.restore();
-  ctx.fillStyle='#1565C0'; ctx.fillRect(-10,-52,20,24);
-  // Bag held in front
-  ctx.fillStyle='#B71C1C'; ctx.fillRect(8,-54,19,36);
-  ctx.fillStyle='#FFCDD2'; ctx.fillRect(10,-52,15,32);
-  ctx.strokeStyle='#EF9A9A'; ctx.lineWidth=1;
-  for(let ly=-47;ly<-21;ly+=7){ ctx.beginPath(); ctx.moveTo(10,ly); ctx.lineTo(25,ly); ctx.stroke(); }
-  ctx.fillStyle='#FDBCB4'; ctx.beginPath(); ctx.arc(0,-62,9,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='#D32F2F'; ctx.fillRect(-11,-74,22,11); ctx.fillRect(-15,-64,8,4);
-  ctx.fillStyle='#333'; ctx.fillRect(-4,-65,2.5,2.5); ctx.fillRect(2,-65,2.5,2.5);
-  ctx.restore();
-}
-
-function drawParkedBike(px){
-  ctx.save(); ctx.translate(px,FLOOR);
-  ctx.strokeStyle='#1A1A1A'; ctx.lineWidth=4;
-  ctx.beginPath(); ctx.arc(-22,0,18,0,Math.PI*2); ctx.stroke();
-  ctx.beginPath(); ctx.arc(22,0,18,0,Math.PI*2); ctx.stroke();
-  ctx.strokeStyle='#C62828'; ctx.lineWidth=2.5;
-  ctx.beginPath(); ctx.moveTo(-22,0); ctx.lineTo(0,-20); ctx.lineTo(22,0); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(0,-20); ctx.lineTo(0,-33); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(0,-33); ctx.lineTo(18,-28); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(-6,-28); ctx.lineTo(6,-28); ctx.stroke();
-  ctx.restore();
-}
-
-/* ════════════════════ DESTINATION HOUSE ════════════════════ */
-function getDoorX(){ return G.destHouseX + DEST_W/2; }
-
-function drawDestHouse(){
-  const cfg=G.cfg, x=G.destHouseX, by=ROAD_TOP, w=DEST_W, h=DEST_H;
-  const n=isNight(), doorX=getDoorX();
-  // Glow
-  ctx.fillStyle='rgba(255,255,160,0.07)'; ctx.fillRect(x-28,by-h-45,w+56,h+45);
-  // Wall
-  ctx.fillStyle=n?dk(cfg.wc,-50):cfg.wc; ctx.fillRect(x,by-h,w,h);
-  // Roof
-  ctx.fillStyle=n?dk(cfg.rc,-30):cfg.rc;
-  ctx.beginPath(); ctx.moveTo(x-10,by-h); ctx.lineTo(x+w/2,by-h-44); ctx.lineTo(x+w+10,by-h); ctx.fill();
-  // Chimney
-  ctx.fillStyle=n?dk(cfg.rc,-20):dk(cfg.rc,15);
-  ctx.fillRect(x+w*0.7-5,by-h-60,14,22);
-  // Small smoke
-  for(let s=0;s<3;s++){
-    ctx.fillStyle=`rgba(200,200,200,${0.3-s*.08})`;
-    const ofs=Math.sin(G.frame*.05+s)*4;
-    ctx.beginPath(); ctx.arc(x+w*0.7+2+ofs,by-h-65-s*12,4+s*2,0,Math.PI*2); ctx.fill();
-  }
-  // Door frame + door
-  ctx.fillStyle='#4A2800'; ctx.fillRect(doorX-DOOR_W/2,by-DOOR_H,DOOR_W,DOOR_H);
-  ctx.strokeStyle='#6B3300'; ctx.lineWidth=2; ctx.strokeRect(doorX-DOOR_W/2,by-DOOR_H,DOOR_W,DOOR_H);
-  ctx.fillStyle='#5C3300'; ctx.beginPath(); ctx.arc(doorX,by-DOOR_H,DOOR_W/2,Math.PI,0); ctx.fill();
-  // Door knocker
-  ctx.fillStyle='#FFD700';
-  ctx.beginPath(); ctx.arc(doorX+2,by-DOOR_H/2,3,0,Math.PI*2); ctx.fill();
-  // Door open
-  if(G.doorOpen>0){
-    ctx.fillStyle=`rgba(255,215,100,${G.doorOpen*.9})`;
-    ctx.fillRect(doorX-DOOR_W/2+1,by-DOOR_H+1,DOOR_W-2,DOOR_H-1);
-    ctx.save(); ctx.translate(doorX-DOOR_W/2,by);
-    ctx.scale(Math.max(0,1-G.doorOpen*1.25),1);
-    ctx.fillStyle='#5C2800'; ctx.fillRect(0,-DOOR_H,DOOR_W,DOOR_H);
-    ctx.restore();
-    if(G.doorOpen>.55){
-      ctx.font='22px serif'; ctx.textAlign='center';
-      ctx.fillText(cfg.cust, doorX, by-14);
-    }
-    if(G.delivPhase>=4){
-      const tw=cfg.cName.length*7+90;
-      ctx.fillStyle='rgba(255,255,200,0.96)'; rr(doorX-tw/2,by-h-68,tw,20,4); ctx.fill();
-      ctx.fillStyle='#222'; ctx.font='bold 10px Courier New'; ctx.textAlign='center';
-      ctx.fillText(`¡Gracias, Pablo! — ${cfg.cName}`, doorX, by-h-53);
-    }
-  }
-  // Windows
-  ctx.fillStyle=n?(G.rain?'#1A4060':'#FFA040'):(G.rain?'#3E6880':'#AED6F1');
-  ctx.fillRect(x+14,by-h+25,30,24); ctx.fillRect(x+w-44,by-h+25,30,24);
-  // Window cross bars
-  ctx.strokeStyle=n?dk(cfg.wc,-40):cfg.wc; ctx.lineWidth=1;
-  [x+14,x+w-44].forEach(wx=>{
-    ctx.beginPath(); ctx.moveTo(wx+15,by-h+25); ctx.lineTo(wx+15,by-h+49); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(wx,by-h+37); ctx.lineTo(wx+30,by-h+37); ctx.stroke();
-  });
-  // Address sign
-  ctx.fillStyle='rgba(0,0,0,0.77)'; rr(x+w/2-68,by-h-26,136,19,3); ctx.fill();
-  ctx.fillStyle='#FFD700'; ctx.font='bold 8px Courier New'; ctx.textAlign='center';
-  ctx.fillText(cfg.addr, x+w/2, by-h-12);
-  // Delivery arrows and prompts
-  if(G.delivPhase===0){
-    if(Math.floor(G.frame/15)%2){
-      ctx.fillStyle='#FFD700'; ctx.font='bold 13px Courier New'; ctx.textAlign='center';
-      ctx.fillText('↓ '+cfg.dest+' ↓', x+w/2, by-h-52);
-    }
-  }
-  if(G.delivPhase===2){
-    const blink=Math.floor(G.frame/11)%2;
-    ctx.fillStyle=blink?'rgba(255,255,220,0.97)':'rgba(255,210,120,0.97)';
-    rr(doorX+18,by-DOOR_H-30,66,18,4); ctx.fill();
-    ctx.fillStyle='#222'; ctx.font='bold 9px Courier New'; ctx.textAlign='left';
-    ctx.fillText('toc toc...', doorX+24, by-DOOR_H-16);
-  }
-}
-
-/* ════════════════════ OBSTACLES ════════════════════ */
-function drawObs(o){
-  ctx.save();
-  const n=isNight();
-  if(o.type==='pothole'){
-    ctx.fillStyle=n?'#1A1A1A':'#222';
-    ctx.beginPath(); ctx.ellipse(o.x,ROAD_TOP+26,o.w/2,9,0,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle=n?'#111':'#151515';
-    ctx.beginPath(); ctx.ellipse(o.x+2,ROAD_TOP+28,o.w/2-5,5,.1,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='rgba(255,100,0,0.88)'; ctx.font='bold 9px Courier New'; ctx.textAlign='center';
-    ctx.fillText('⚠',o.x,ROAD_TOP+13);
-  }
-  else if(o.type==='dog'){
-    const x=o.x,y=FLOOR,run=Math.floor(o.frame/7)%2;
-    ctx.fillStyle='#C07A12'; ctx.fillRect(x-22,y-22,34,14);
-    ctx.beginPath(); ctx.arc(x+15,y-26,9,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#96600E'; ctx.fillRect(x+17,y-36,5,11);
-    const lo=run?4:-4;
-    ctx.fillStyle='#96600E';
-    ctx.fillRect(x-18,y-8+lo,6,10-lo); ctx.fillRect(x-8,y-8-lo,6,10+lo);
-    ctx.fillRect(x+4,y-8+lo,6,10-lo); ctx.fillRect(x+14,y-8-lo,6,10+lo);
-    ctx.strokeStyle='#C07A12'; ctx.lineWidth=3;
-    ctx.beginPath(); ctx.moveTo(x-22,y-18); ctx.quadraticCurveTo(x-38,y-36+run*8,x-30,y-28+run*4); ctx.stroke();
-    ctx.fillStyle='#F44336'; ctx.fillRect(x+19,y-19,4,3);
-    ctx.fillStyle='#fff'; ctx.fillRect(x+20,y-22,2,3); ctx.fillRect(x+22,y-22,2,3);
-    ctx.fillStyle='#222'; ctx.fillRect(x+14,y-30,3,3);
-  }
-  else if(o.type==='bus'){
-    const x=o.x,y=FLOOR,bw=132,bh=92;
-    const col=o.line==='542'?'#1B5E20':'#0D1B6B';
-    const dark=o.line==='542'?'#0A3D0A':'#060E3D';
-    ctx.fillStyle=col; ctx.fillRect(x,y-bh,bw,bh);
-    ctx.fillStyle=dark; ctx.fillRect(x+2,y-bh-9,bw-4,11);
-    ctx.fillStyle='#B3E5FC';
-    ctx.fillRect(x+4,y-bh+8,22,26);
-    for(let wi=1;wi<5;wi++) ctx.fillRect(x+30+wi*22,y-bh+11,17,18);
-    ctx.fillStyle='#FFD600'; ctx.fillRect(x+48,y-bh-6,42,15);
-    ctx.fillStyle='#111'; ctx.font='bold 11px Courier New'; ctx.textAlign='center';
-    ctx.fillText(o.line,x+69,y-bh+7);
-    ctx.fillStyle='#999'; ctx.fillRect(x+4,y-19,20,14);
-    ctx.fillStyle='#555'; ctx.fillRect(x+6,y-17,16,10);
-    ctx.fillStyle='#1A1A1A';
-    ctx.beginPath(); ctx.arc(x+22,y,14,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(x+108,y,14,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle='#555'; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.arc(x+22,y,9,0,Math.PI*2); ctx.stroke();
-    ctx.beginPath(); ctx.arc(x+108,y,9,0,Math.PI*2); ctx.stroke();
-    // Mirror (duck to avoid)
-    ctx.fillStyle='#555'; ctx.fillRect(x-2,y-68,4,14);
-    ctx.fillStyle='#777'; ctx.fillRect(x-22,y-73,24,11);
-    ctx.fillStyle='rgba(150,220,255,0.6)'; ctx.fillRect(x-20,y-71,20,7);
-    if(o.x<W-50&&o.x>PABLO_RX-35){
-      ctx.fillStyle='rgba(255,230,0,0.94)'; rr(x+bw/2-56,y-bh-29,112,21,4); ctx.fill();
-      ctx.fillStyle='#000'; ctx.font='bold 9px Courier New'; ctx.textAlign='center';
-      ctx.fillText('↓ AGACHATE (espejo del colectivo!)',x+bw/2,y-bh-13);
-    }
-  }
-  else if(o.type==='cardoor'){
-    const x=o.x,y=FLOOR;
-    ctx.fillStyle='#1565C0'; ctx.fillRect(x,y-50,76,50);
-    ctx.fillStyle='#0D47A1'; ctx.fillRect(x+10,y-70,52,22);
-    ctx.fillStyle='#B3E5FC';
-    ctx.fillRect(x+13,y-67,20,18); ctx.fillRect(x+38,y-67,20,18);
-    ctx.fillStyle='#777'; ctx.fillRect(x,y-8,76,8);
-    ctx.fillStyle='#1A1A1A';
-    ctx.beginPath(); ctx.arc(x+16,y,12,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(x+60,y,12,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle='#555'; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.arc(x+16,y,7,0,Math.PI*2); ctx.stroke();
-    ctx.beginPath(); ctx.arc(x+60,y,7,0,Math.PI*2); ctx.stroke();
-    ctx.save(); ctx.translate(x+28,y-8); ctx.rotate(-o.doorAngle);
-    ctx.fillStyle='#1E88E5'; ctx.fillRect(-2,-44,40,44);
-    ctx.strokeStyle='#0D47A1'; ctx.lineWidth=1; ctx.strokeRect(-2,-44,40,44);
-    ctx.fillStyle='#B3E5FC'; ctx.fillRect(2,-40,32,18);
-    ctx.fillStyle='#777'; ctx.fillRect(32,-15,5,8);
-    ctx.restore();
-    if(o.doorAngle>.18&&o.x<W-30&&o.x>PABLO_RX-35){
-      ctx.fillStyle='rgba(255,80,0,0.93)'; rr(x+38-44,y-82,88,20,4); ctx.fill();
-      ctx.fillStyle='#fff'; ctx.font='bold 9px Courier New'; ctx.textAlign='center';
-      ctx.fillText('↑ SALTA!',x+38,y-67);
-    }
-  }
-  ctx.restore();
-}
-
-/* ════════════════════ RAIN ════════════════════ */
-function drawRain(){
-  if(!G.rain) return;
-  ctx.strokeStyle='rgba(155,205,255,0.48)'; ctx.lineWidth=1;
-  G.drops.forEach(d=>{ ctx.beginPath(); ctx.moveTo(d.x,d.y); ctx.lineTo(d.x-3,d.y+d.len); ctx.stroke(); });
-}
-
-/* ════════════════════ HUD ════════════════════ */
-function drawBar(x,y,w,h,pct,c1,c2){
-  ctx.fillStyle='#0A0A0A'; ctx.fillRect(x,y,w,h);
-  if(pct>0){
-    const g=ctx.createLinearGradient(x,y,x+w*pct,y);
-    g.addColorStop(0,c1); g.addColorStop(1,c2);
-    ctx.fillStyle=g; ctx.fillRect(x,y,w*Math.max(0,pct),h);
-  }
-  ctx.strokeStyle='#2A2A2A'; ctx.lineWidth=1; ctx.strokeRect(x,y,w,h);
-}
-
-function drawHUD(){
-  // Left bars
-  ctx.fillStyle='rgba(0,0,0,0.78)'; rr(8,8,218,80,7); ctx.fill();
-  ctx.strokeStyle='#252525'; ctx.lineWidth=1; rr(8,8,218,80,7); ctx.stroke();
-  ctx.textAlign='left';
-  ctx.fillStyle='#ccc'; ctx.font='bold 10px Courier New'; ctx.fillText('🌡 Temp. pedido',16,28);
-  const tp=G.temp/100;
-  const tc=tp>.6?['#43A047','#66BB6A']:tp>.3?['#FB8C00','#FF6B00']:['#E53935','#FF0000'];
-  drawBar(16,32,198,13,tp,tc[0],tc[1]);
-  ctx.fillStyle='#999'; ctx.font='8px Courier New'; ctx.fillText(Math.ceil(G.temp)+'°C',20,42);
-  ctx.fillStyle='#ccc'; ctx.font='bold 10px Courier New'; ctx.fillText('📦 Paquete',16,62);
-  const ip=G.integ/100;
-  const ic=ip>.6?['#1E88E5','#42A5F5']:ip>.3?['#FB8C00','#FF6B00']:['#E53935','#FF0000'];
-  drawBar(16,66,198,13,ip,ic[0],ic[1]);
-  ctx.fillStyle='#999'; ctx.font='8px Courier New'; ctx.fillText(Math.ceil(G.integ)+'%',20,76);
-
-  // Top right: level + score
-  if(G.cfg){
-    ctx.fillStyle='rgba(0,0,0,0.76)'; rr(W-192,8,184,48,5); ctx.fill();
-    ctx.textAlign='right';
-    ctx.fillStyle='#666'; ctx.font='9px Courier New'; ctx.fillText(G.cfg.title+' — '+G.cfg.sub,W-12,22);
-    ctx.fillStyle='#F5C518'; ctx.font='bold 14px Courier New'; ctx.fillText('Pts: '+G.totalScore,W-12,42);
-  }
-
-  // Progress bar bottom
-  if(G.cfg&&G.phase!=='over'&&G.phase!=='start'){
-    const bx=12,bby=H-20,bw=W-24,bh=9;
-    const pct=Math.min(1,G.progress/G.cfg.dist);
-    ctx.fillStyle='rgba(0,0,0,0.64)'; rr(bx-3,bby-3,bw+6,bh+6,4); ctx.fill();
-    ctx.fillStyle='#111'; ctx.fillRect(bx,bby,bw,bh);
-    const gp=ctx.createLinearGradient(bx,bby,bx+bw*pct,bby);
-    gp.addColorStop(0,'#1565C0'); gp.addColorStop(1,'#42A5F5');
-    ctx.fillStyle=gp; ctx.fillRect(bx,bby,bw*pct,bh);
-    ctx.font='12px serif'; ctx.textAlign='center';
-    ctx.fillText('🚲',bx+bw*pct,bby-1);
-    ctx.fillText('📍',bx+bw,bby-1);
-    ctx.fillStyle='#444'; ctx.font='8px Courier New'; ctx.textAlign='left';
-    ctx.fillText(G.cfg.dest+' — '+Math.floor(G.progress)+'/'+G.cfg.dist+'m',bx+4,bby+bh+12);
-  }
-
-  // Rain banner
-  if(G.rain&&G.phase==='play'){
-    ctx.fillStyle='rgba(20,50,120,0.84)'; rr(W/2-82,8,164,20,4); ctx.fill();
-    ctx.fillStyle='#90CAF9'; ctx.font='bold 10px Courier New'; ctx.textAlign='center';
-    ctx.fillText('☔ PISO MOJADO — CUIDADO',W/2,21);
-  }
-  if(G.highScore>0&&G.phase==='play'){
-    ctx.fillStyle='#1e1e1e'; ctx.font='9px Courier New'; ctx.textAlign='left';
-    ctx.fillText('RÉC: '+G.highScore+' pts',16,98);
-  }
-}
-
-/* ════════════════════ SCREENS ════════════════════ */
-function drawStartScreen(){
-  // Render a static scene behind the title
-  ctx.clearRect(0,0,W,H);
-  G.cfg=LEVELS[0]; G.bgX=0; G.roadX=0; G.rain=false; G.drops=[];
-  drawSky(); drawClouds(); drawRoad(); G.cfg=null;
-  ctx.fillStyle='rgba(0,0,0,0.70)'; ctx.fillRect(0,0,W,H);
-  ctx.textAlign='center';
-  ctx.fillStyle='#F5C518'; ctx.font='bold 38px Courier New'; ctx.fillText('pablo:',W/2,H/2-102);
-  ctx.fillStyle='#FFFFFF'; ctx.font='bold 20px Courier New'; ctx.fillText('un Filósofo en bicicleta',W/2,H/2-68);
-  ctx.fillStyle='#777'; ctx.font='10px Courier New'; ctx.fillText('Lomas de Zamora · Banfield · Gran Buenos Aires',W/2,H/2-44);
-  ctx.fillStyle='#aaa'; ctx.font='11px Courier New';
-  ctx.fillText('Llevá los pedidos antes de que se enfríen 🌡  sin romper el paquete 📦',W/2,H/2-14);
-  ctx.fillText('Evitá: pozos · perros · colectivos 542/160 · puertas de autos',W/2,H/2+4);
-  ctx.fillStyle='#CC66FF'; ctx.font='11px Courier New';
-  ctx.fillText('★ Tu amigo Manuel Ferreyra DJ 🎧 aparece en el camino',W/2,H/2+22);
-  const blink=Math.floor(Date.now()/560)%2;
-  if(blink){ ctx.fillStyle='#4CAF50'; ctx.font='bold 14px Courier New'; ctx.fillText('[ ESPACIO · CLIC · TOQUE PARA EMPEZAR ]',W/2,H/2+56); }
-  ctx.fillStyle='#333'; ctx.font='10px Courier New';
-  ctx.fillText('5 NIVELES · 5 ENTREGAS · 5 DESTINOS',W/2,H/2+80);
-  ctx.fillText('↑ SALTAR  ↓ AGACHARSE (para el espejo del colectivo)',W/2,H/2+96);
-}
-
-function drawIntroScreen(){
-  const cfg=G.cfg, pct=1-G.introTimer/185;
-  let oa,ta;
-  if(pct<.15){oa=pct/.15*.84; ta=pct/.15;}
-  else if(pct>.80){oa=(1-pct)/.20*.84; ta=(1-pct)/.20;}
-  else{oa=.84; ta=1;}
-  ctx.fillStyle=`rgba(0,0,0,${oa})`; ctx.fillRect(0,0,W,H);
-  ctx.globalAlpha=ta; ctx.textAlign='center';
-  ctx.fillStyle='#F5C518'; ctx.font='bold 16px Courier New'; ctx.fillText(cfg.title+' — '+cfg.sub,W/2,H/2-72);
-  ctx.fillStyle='#fff'; ctx.font='bold 13px Courier New'; ctx.fillText('Destino: '+cfg.dest,W/2,H/2-44);
-  ctx.fillStyle='#888'; ctx.font='10px Courier New'; ctx.fillText(cfg.addr,W/2,H/2-24);
-  ctx.fillText('Distancia: '+cfg.dist+' metros',W/2,H/2-4);
-  if(cfg.hasManuel){ ctx.fillStyle='#CC44FF'; ctx.fillText('★ Manuel Ferreyra DJ aparece en el camino!',W/2,H/2+16); }
-  if(cfg.rain){ ctx.fillStyle='#90CAF9'; ctx.fillText('☔ Lloverá durante todo el nivel',W/2,H/2+34); }
-  if(cfg.night){ ctx.fillStyle='#90A8CF'; ctx.fillText('🌙 Noche cerrada en Lomas de Zamora',W/2,H/2+(cfg.rain?52:34)); }
-  ctx.fillStyle='#444'; ctx.font='italic 10px Courier New'; ctx.fillText(cfg.quote,W/2,H/2+68);
-  ctx.fillStyle='#333'; ctx.font='10px Courier New'; ctx.fillText('[ pulsa ESPACIO o toca para empezar ya ]',W/2,H/2+88);
-  ctx.globalAlpha=1;
-}
-
-function drawLevelCompleteScreen(){
-  const cfg=G.cfg;
-  ctx.fillStyle='rgba(0,0,0,0.78)'; ctx.fillRect(0,0,W,H);
-  ctx.textAlign='center';
-  ctx.fillStyle='#76FF03'; ctx.font='bold 24px Courier New'; ctx.fillText('¡ENTREGA COMPLETADA!',W/2,H/2-110);
-  ctx.fillStyle='#FFD700'; ctx.font='bold 13px Courier New'; ctx.fillText(cfg.dest+' — '+cfg.addr,W/2,H/2-84);
-  ctx.fillStyle='#ccc'; ctx.font='11px Courier New';
-  ctx.fillText('Bonus temperatura:  +'+Math.floor(G.temp*2),W/2,H/2-52);
-  ctx.fillText('Bonus paquete intacto:  +'+Math.floor(G.integ*1.5),W/2,H/2-34);
-  ctx.fillStyle='#F5C518'; ctx.font='bold 15px Courier New';
-  ctx.fillText('Puntaje nivel: '+G.levelScore,W/2,H/2-8);
-  ctx.fillStyle='#4CAF50'; ctx.font='bold 13px Courier New';
-  ctx.fillText('Total acumulado: '+G.totalScore,W/2,H/2+14);
-  ctx.fillStyle='#444'; ctx.font='italic 10px Courier New'; ctx.fillText(cfg.quote,W/2,H/2+38);
-  const next=LEVELS[G.levelIdx+1];
-  if(next){
-    ctx.fillStyle='#1E88E5'; ctx.font='11px Courier New';
-    ctx.fillText('Siguiente: '+next.title+' — '+next.dest,W/2,H/2+60);
-  } else {
-    ctx.fillStyle='#FFD700'; ctx.font='bold 12px Courier New';
-    ctx.fillText('¡COMPLETASTE TODOS LOS NIVELES, FILÓSOFO!',W/2,H/2+62);
-  }
-  const blink=Math.floor(Date.now()/560)%2;
-  if(blink){ ctx.fillStyle='#4CAF50'; ctx.font='bold 12px Courier New'; ctx.fillText(next?'[ ESPACIO · CLIC para el siguiente nivel ]':'[ ESPACIO · CLIC para volver a empezar ]',W/2,H/2+90); }
-}
-
-function drawGameOverScreen(){
-  ctx.fillStyle='rgba(0,0,0,0.76)'; ctx.fillRect(0,0,W,H);
-  ctx.textAlign='center';
-  ctx.fillStyle='#E53935'; ctx.font='bold 34px Courier New'; ctx.fillText('GAME OVER',W/2,H/2-90);
-  const rsn=G.temp<=0?'🥶 El pedido llegó FRÍO — cliente furibundo':'💥 El paquete quedó destruido — no pagaron';
-  ctx.fillStyle='#ddd'; ctx.font='12px Courier New'; ctx.fillText(rsn,W/2,H/2-56);
-  ctx.fillStyle='#F5C518'; ctx.font='bold 19px Courier New'; ctx.fillText('Total: '+G.totalScore+' puntos',W/2,H/2-20);
-  if(G.totalScore>=G.highScore&&G.totalScore>0){
-    ctx.fillStyle='#76FF03'; ctx.font='bold 13px Courier New'; ctx.fillText('🏆 ¡NUEVO RÉCORD!',W/2,H/2+6);
-  } else {
-    ctx.fillStyle='#444'; ctx.font='11px Courier New'; ctx.fillText('Récord: '+G.highScore+' puntos',W/2,H/2+6);
-  }
-  if(G.cfg){ ctx.fillStyle='#444'; ctx.font='italic 10px Courier New'; ctx.fillText(G.cfg.quote,W/2,H/2+34); }
-  const blink=Math.floor(Date.now()/560)%2;
-  if(blink){ ctx.fillStyle='#4CAF50'; ctx.font='bold 12px Courier New'; ctx.fillText('[ ESPACIO · CLIC · TOQUE PARA REINTENTAR ]',W/2,H/2+68); }
-}
-
-/* ════════════════════ SPAWN / COLLISION ════════════════════ */
-function spawnObs(){
-  const types=['pothole','pothole','dog','dog','bus','cardoor','cardoor'];
-  const type=types[Math.floor(Math.random()*types.length)];
-  const o={ type, x:W+115, frame:0 };
-  if(type==='pothole') o.w=30+Math.random()*42;
-  if(type==='bus') o.line=Math.random()<.5?'542':'160';
-  if(type==='cardoor'){ o.doorAngle=0; o.opening=true; }
-  G.obs.push(o);
-}
-
-function checkCollisions(){
-  if(G.invTimer>0) return;
-  const p=G.pablo, duck=p.ducking;
-  const pTop=p.y-(duck?H_DUCK:H_STAND), pBot=p.y;
-  const pL=PABLO_RX-22, pR=PABLO_RX+24;
-  for(const o of G.obs){
-    let hit=false;
-    if(o.type==='pothole'){
-      if(!p.jumping||p.y>FLOOR-8){
-        if(PABLO_RX>o.x-o.w/2-10&&PABLO_RX<o.x+o.w/2+10) hit=true;
-      }
-    } else if(o.type==='dog'){
-      const dT=FLOOR-30,dL=o.x-24,dR=o.x+18;
-      if(pR>dL&&pL<dR&&pTop<FLOOR&&pBot>dT) hit=true;
-    } else if(o.type==='bus'){
-      const bT=FLOOR-94,bB=FLOOR-46,bL=o.x-2,bR=o.x+132;
-      if(pR>bL&&pL<bR&&pTop<bB&&pBot>bT&&!duck) hit=true;
-    } else if(o.type==='cardoor'){
-      if(o.doorAngle>.20){
-        const dL=o.x+24,dR=o.x+70,dT=FLOOR-52,dB=FLOOR-6;
-        if(pR>dL&&pL<dR&&pTop<dB&&pBot>dT) hit=true;
-      }
-    }
-    if(hit){ G.integ=Math.max(0,G.integ-28); G.invTimer=85; break; }
-  }
-}
-
-/* ════════════════════ UPDATE ════════════════════ */
-function updateRain(){
-  if(!G.cfg.rain&&G.rainTimer>0){
-    G.rainTimer--;
-    if(G.rainTimer<=0){
-      G.rain=!G.rain;
-      G.rainTimer=G.rain?(160+Math.random()*220):(360+Math.random()*280);
-      if(!G.rain) G.drops=[];
-    }
-  }
-  if(G.rain&&Math.random()<.48)
-    G.drops.push({x:Math.random()*W,y:-10,len:10+Math.random()*12,sp:9+Math.random()*5});
-  G.drops=G.drops.filter(d=>d.y<H+22);
-  G.drops.forEach(d=>{ d.y+=d.sp; d.x-=2.5; });
-}
-
-function update(){
-  G.frame++;
-  if(G.phase==='intro'){
-    G.introTimer--;
-    if(G.introTimer<=0) G.phase='play';
-    return;
-  }
-  if(G.phase==='play'){
-    G.pablo.tick++;
-    G.bgX+=G.speed*.48; G.roadX+=G.speed;
-    G.progress+=G.speed*.048;
-    G.speed=Math.min(G.cfg.spd+5, G.speed+.001);
-    G.temp-=.02+G.speed*.0008;
-    if(G.temp<0) G.temp=0;
-    const p=G.pablo;
-    if(p.jumping){ p.vy+=GRAVITY; p.y+=p.vy; if(p.y>=FLOOR){p.y=FLOOR;p.vy=0;p.jumping=false;} }
-    updateRain();
-    // Manuel building
-    if(G.cfg.hasManuel&&!G.manuelSpawned&&G.progress>=G.cfg.manuelAt){
-      G.manuelSpawned=true; G.manuelBuilding={x:W+70};
-    }
-    if(G.manuelBuilding){
-      G.manuelBuilding.x-=G.speed;
-      if(G.manuelBuilding.x<PABLO_RX+60&&G.manuelBuilding.x>PABLO_RX-100&&G.manuelWaveTimer===0){
-        G.manuelWaveTimer=240;
-        G.temp=Math.min(100,G.temp+10);
-      }
-      if(G.manuelWaveTimer>0) G.manuelWaveTimer--;
-      if(G.manuelBuilding.x<-120) G.manuelBuilding=null;
-    }
-    // Obstacles
-    G.spawnCD--;
-    if(G.spawnCD<=0){ spawnObs(); G.spawnCD=Math.max(44,G.cfg.spc-Math.floor(G.progress*.035)); }
-    G.obs=G.obs.filter(o=>o.x>-240);
-    G.obs.forEach(o=>{
-      o.x-=G.speed; o.frame=(o.frame||0)+1;
-      if(o.type==='cardoor'){
-        if(o.opening){o.doorAngle+=.022; if(o.doorAngle>=1.1)o.opening=false;}
-        else{o.doorAngle-=.014; if(o.doorAngle<0){o.doorAngle=0;o.opening=true;}}
-      }
+    // Mover Obstáculos
+    gameState.obstacles.forEach((obs, index) => {
+        obs.x -= gameState.speed;
+        
+        // Colisión simple
+        if(obs.x < 100 && obs.x + obs.w > 50 && (gameState.pabloY + canvas.height - 70) > obs.y) {
+            if(gameState.level === 3) {
+                triggerDeath(); // Muerte obligatoria nivel 3
+            } else {
+                // Penalización menor
+            }
+        }
     });
-    if(G.invTimer>0) G.invTimer--;
-    checkCollisions();
-    if(G.temp<=0||G.integ<=0){ G.phase='over'; return; }
-    if(G.progress>=G.cfg.dist){
-      G.obs=[]; G.destHouseX=W+130; G.phase='arriving';
+
+    // Transiciones de Nivel
+    if(gameState.distance > 100 && gameState.level === 1) nextLevel(2);
+    if(gameState.distance > 200 && gameState.level === 2) nextLevel(3);
+    if(gameState.distance > 350 && gameState.level === 3) { /* El choque ocurre por obstáculos */ }
+
+    draw();
+    requestAnimationFrame(update);
+}
+
+function nextLevel(num) {
+    gameState.level = num;
+    gameState.distance = 0;
+    gameState.obstacles = [];
+    document.getElementById('level-title').innerText = LEVELS[num].title;
+    
+    if(num === 2) {
+        gameState.speed = 3; // Pablo camina lento
+        showMessage("¡Se rompió la cadena! A caminar...");
     }
-    return;
-  }
-  if(G.phase==='arriving'){
-    G.pablo.tick++;
-    G.bgX+=G.speed*.48; G.roadX+=G.speed;
-    G.destHouseX-=G.speed;
-    G.speed=Math.max(0,G.speed-.07);
-    updateRain();
-    if(G.speed<=0){
-      G.speed=0; G.phase='delivering'; G.delivPhase=1; G.pabloX=PABLO_RX;
+    if(num === 3) {
+        gameState.speed = 12; // A toda velocidad
+        showMessage("¡Me agarro de este camión! Cuidado...");
     }
-    return;
-  }
-  if(G.phase==='delivering'){
-    G.pablo.tick++;
-    if(G.delivPhase===1){
-      G.pabloX+=2.5;
-      if(G.pabloX>=getDoorX()-22){ G.delivPhase=2; G.delivTimer=0; }
-    } else if(G.delivPhase===2){
-      G.delivTimer++;
-      if(G.delivTimer>=68){ G.delivPhase=3; G.delivTimer=0; }
-    } else if(G.delivPhase===3){
-      G.doorOpen=Math.min(1,G.doorOpen+.033);
-      if(G.doorOpen>=1){
-        G.delivPhase=4; G.delivTimer=0;
-        const tb=Math.floor(G.temp*2), ib=Math.floor(G.integ*1.5), db=Math.floor(G.progress*.4);
-        G.levelScore=tb+ib+db; G.totalScore+=G.levelScore;
-        if(G.totalScore>G.highScore) G.highScore=G.totalScore;
-      }
-    } else if(G.delivPhase===4){
-      G.delivTimer++;
-      if(G.delivTimer>=135) G.phase='levelcomplete';
+}
+
+function triggerDeath() {
+    gameState.level = 4;
+    gameState.speed = 4;
+    document.getElementById('level-title').innerText = LEVELS[4].title;
+    showMessage("El cuerpo quedó en el asfalto... el alma sigue entregando.");
+}
+
+function showMessage(txt) {
+    dialogueBox.innerText = txt;
+    dialogueBox.style.display = 'block';
+    setTimeout(() => dialogueBox.style.display = 'none', 4000);
+}
+
+function draw() {
+    const current = LEVELS[gameState.level];
+    ctx.fillStyle = current.bg;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Suelo
+    ctx.fillStyle = current.ground;
+    ctx.fillRect(0, canvas.height - 20, canvas.width, 20);
+
+    // Pablo
+    ctx.fillStyle = gameState.level === 4 ? "rgba(200, 255, 255, 0.8)" : "#333";
+    let pabloHeight = gameState.isDucking ? 25 : 50;
+    ctx.fillRect(50, canvas.height - 70 + gameState.pabloY, 30, pabloHeight);
+    
+    // Mochila de repartidor
+    ctx.fillStyle = "#ff5722";
+    ctx.fillRect(40, canvas.height - 65 + gameState.pabloY, 15, 30);
+
+    // Dibujar obstáculos
+    gameState.obstacles.forEach(obs => obs.draw());
+}
+
+// Controles
+function handleInput() {
+    if(!gameState.isJumping) {
+        gameState.isJumping = true;
+        gameState.jumpV = -12;
     }
-  }
 }
 
-/* ════════════════════ RENDER ════════════════════ */
-function render(){
-  ctx.clearRect(0,0,W,H);
-  if(G.phase==='start'){ drawStartScreen(); return; }
-  if(!G.cfg) return;
+window.addEventListener('keydown', (e) => { if(e.code === 'Space' || e.code === 'ArrowUp') handleInput(); });
+window.addEventListener('touchstart', handleInput);
 
-  drawSky(); drawClouds();
-
-  // BG elements (skip zone around Manuel building)
-  const period=150;
-  const s0=Math.floor(G.bgX*.7/period)-1;
-  for(let i=s0;i<=s0+8;i++){
-    const sx=i*period-G.bgX*.7;
-    const seed=(i*23+7)&0xFFFFF;
-    const mb=G.manuelBuilding;
-    if(mb&&sx>mb.x-40&&sx<mb.x+110) continue;
-    const type=sr(seed+11);
-    if(type<.52) drawHouseAt(sx,seed);
-    else if(type<.78){ drawTreeAt(sx+18,seed); drawTreeAt(sx+55,seed+3); }
-    else{ drawSignAt(sx+5,seed); drawTreeAt(sx+90,seed+50); }
-  }
-
-  if(G.manuelBuilding) drawManuelBuilding(G.manuelBuilding.x);
-  if(G.phase==='arriving'||G.phase==='delivering') drawDestHouse();
-
-  drawRoad();
-  G.obs.filter(o=>o.type==='pothole').forEach(drawObs);
-
-  if(G.phase==='delivering'){
-    drawParkedBike(PABLO_RX);
-    drawPabloWalking(G.pabloX);
-  } else {
-    drawPabloRiding(PABLO_RX,G.pablo.y);
-  }
-
-  G.obs.filter(o=>o.type!=='pothole').forEach(drawObs);
-  drawRain();
-  drawHUD();
-
-  if(G.phase==='intro') drawIntroScreen();
-  if(G.phase==='levelcomplete') drawLevelCompleteScreen();
-  if(G.phase==='over') drawGameOverScreen();
-}
-
-/* ════════════════════ INPUT ════════════════════ */
-function doJump(){
-  if(G.phase==='play'&&!G.pablo.jumping){ G.pablo.jumping=true; G.pablo.vy=JUMP_V; }
-}
-function doAction(){
-  if(G.phase==='start'){ startLevel(0,false); return; }
-  if(G.phase==='intro'){ G.introTimer=0; return; }
-  if(G.phase==='over'){ const hs=G.highScore; initGame(); G.highScore=hs; startLevel(0,false); return; }
-  if(G.phase==='levelcomplete'){
-    const next=G.levelIdx+1;
-    if(next<LEVELS.length) startLevel(next,true);
-    else{ const hs=G.highScore; initGame(); G.highScore=hs; startLevel(0,false); }
-    return;
-  }
-  if(G.phase==='play') doJump();
-}
-
-document.addEventListener('keydown',e=>{
-  if(e.code==='Space'||e.code==='ArrowUp'){ e.preventDefault(); doAction(); }
-  if(e.code==='ArrowDown'){ e.preventDefault(); if(G.pablo) G.pablo.ducking=true; }
-});
-document.addEventListener('keyup',e=>{
-  if(e.code==='ArrowDown'){ if(G.pablo) G.pablo.ducking=false; }
-});
-canvas.addEventListener('click', doAction);
-canvas.addEventListener('touchstart',e=>{
-  e.preventDefault();
-  if(G.phase!=='play'){ doAction(); return; }
-  const r=canvas.getBoundingClientRect();
-  const ty=(e.touches[0].clientY-r.top)/r.height;
-  if(ty<.55) doJump(); else if(G.pablo) G.pablo.ducking=true;
-},{passive:false});
-canvas.addEventListener('touchend',e=>{ e.preventDefault(); if(G.pablo) G.pablo.ducking=false; },{passive:false});
-
-/* ════════════════════ LOOP ════════════════════ */
-(function loop(){ update(); render(); requestAnimationFrame(loop); })();
+update();
 </script>
 </body>
 </html>
